@@ -309,6 +309,8 @@ static void ppc_exec_inner()
 
     max_cycles = 0;
 
+    bool msr_le = (ppc_state.msr & MSR::LE) != 0;
+
     while (power_on) {
         // define boundaries of the next execution block
         // max execution block length = one memory page
@@ -322,6 +324,7 @@ static void ppc_exec_inner()
         // interpret execution block
         while (power_on && ppc_state.pc < eb_end) {
             ppc_main_opcode();
+            msr_le = (ppc_state.msr & MSR::LE) != 0;
             if (g_icycles++ >= max_cycles) {
                 max_cycles = process_events();
             }
@@ -333,6 +336,7 @@ static void ppc_exec_inner()
                     if (!(exec_flags & ~EXEF_TIMER)) {
                         ppc_state.pc += 4;
                         pc_real += 4;
+                        if (msr_le) pc_real = mmu_translate_imem(ppc_state.pc);
                         ppc_set_cur_instruction(pc_real);
                         exec_flags = 0;
                         continue;
@@ -342,6 +346,7 @@ static void ppc_exec_inner()
                 eb_start = ppc_next_instruction_address;
                 if (!(exec_flags & EXEF_RFI) && (eb_start & PAGE_MASK) == page_start) {
                     pc_real += (int)eb_start - (int)ppc_state.pc;
+                    if (msr_le) pc_real = mmu_translate_imem(eb_start);
                     ppc_set_cur_instruction(pc_real);
                 } else {
                     page_start = eb_start & PAGE_MASK;
@@ -353,6 +358,7 @@ static void ppc_exec_inner()
             } else {
                 ppc_state.pc += 4;
                 pc_real += 4;
+                if (msr_le) pc_real = mmu_translate_imem(ppc_state.pc);
                 ppc_set_cur_instruction(pc_real);
             }
         }
@@ -412,6 +418,8 @@ static void ppc_exec_until_inner(const uint32_t goal_addr)
 
     max_cycles = 0;
 
+    bool msr_le = (ppc_state.msr & MSR::LE) != 0;
+
     do {
         // define boundaries of the next execution block
         // max execution block length = one memory page
@@ -425,6 +433,7 @@ static void ppc_exec_until_inner(const uint32_t goal_addr)
         // interpret execution block
         while (power_on && ppc_state.pc < eb_end) {
             ppc_main_opcode();
+            msr_le = (ppc_state.msr & MSR::LE) != 0;
             if (g_icycles++ >= max_cycles) {
                 max_cycles = process_events();
             }
@@ -436,6 +445,7 @@ static void ppc_exec_until_inner(const uint32_t goal_addr)
                     if (!(exec_flags & ~EXEF_TIMER)) {
                         ppc_state.pc += 4;
                         pc_real += 4;
+                        if (msr_le) pc_real = mmu_translate_imem(ppc_state.pc);
                         ppc_set_cur_instruction(pc_real);
                         exec_flags = 0;
                         continue;
@@ -445,6 +455,7 @@ static void ppc_exec_until_inner(const uint32_t goal_addr)
                 eb_start = ppc_next_instruction_address;
                 if (!(exec_flags & EXEF_RFI) && (eb_start & PAGE_MASK) == page_start) {
                     pc_real += (int)eb_start - (int)ppc_state.pc;
+                    if (msr_le) pc_real = mmu_translate_imem(eb_start);
                     ppc_set_cur_instruction(pc_real);
                 } else {
                     page_start = eb_start & PAGE_MASK;
@@ -456,6 +467,7 @@ static void ppc_exec_until_inner(const uint32_t goal_addr)
             } else {
                 ppc_state.pc += 4;
                 pc_real += 4;
+                if (msr_le) pc_real = mmu_translate_imem(ppc_state.pc);
                 ppc_set_cur_instruction(pc_real);
             }
 
@@ -489,6 +501,7 @@ static void ppc_exec_dbg_inner(const uint32_t start_addr, const uint32_t size)
     uint8_t* pc_real;
 
     max_cycles = 0;
+    bool msr_le = (ppc_state.msr & MSR::LE) != 0;
 
     while (power_on && (ppc_state.pc < start_addr || ppc_state.pc >= start_addr + size)) {
         // define boundaries of the next execution block
@@ -504,6 +517,7 @@ static void ppc_exec_dbg_inner(const uint32_t start_addr, const uint32_t size)
         while (power_on && (ppc_state.pc < start_addr || ppc_state.pc >= start_addr + size)
                 && (ppc_state.pc < eb_end)) {
             ppc_main_opcode();
+            msr_le = (ppc_state.msr & MSR::LE) != 0;
             if (g_icycles++ >= max_cycles) {
                 max_cycles = process_events();
             }
@@ -515,6 +529,7 @@ static void ppc_exec_dbg_inner(const uint32_t start_addr, const uint32_t size)
                     if (!(exec_flags & ~EXEF_TIMER)) {
                         ppc_state.pc += 4;
                         pc_real += 4;
+                        if (msr_le) pc_real = mmu_translate_imem(ppc_state.pc);
                         ppc_set_cur_instruction(pc_real);
                         exec_flags = 0;
                         continue;
@@ -524,6 +539,7 @@ static void ppc_exec_dbg_inner(const uint32_t start_addr, const uint32_t size)
                 eb_start = ppc_next_instruction_address;
                 if (!(exec_flags & EXEF_RFI) && (eb_start & PAGE_MASK) == page_start) {
                     pc_real += (int)eb_start - (int)ppc_state.pc;
+                    if (msr_le) pc_real = mmu_translate_imem(eb_start);
                     ppc_set_cur_instruction(pc_real);
                 } else {
                     page_start = eb_start & PAGE_MASK;
@@ -535,6 +551,7 @@ static void ppc_exec_dbg_inner(const uint32_t start_addr, const uint32_t size)
             } else {
                 ppc_state.pc += 4;
                 pc_real += 4;
+                if (msr_le) pc_real = mmu_translate_imem(ppc_state.pc);
                 ppc_set_cur_instruction(pc_real);
             }
         }

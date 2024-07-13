@@ -151,7 +151,7 @@ AtiMach64Gx::AtiMach64Gx()
     this->disp_id = std::unique_ptr<DisplayID> (new DisplayID(0x07, 0x3A));
 
     // allocate video RAM
-    this->vram_size = 2 << 20; // 2MB ; up to 6MB supported
+    this->vram_size = 6 << 20; // 2MB ; up to 6MB supported
     this->vram_ptr = std::unique_ptr<uint8_t[]> (new uint8_t[this->vram_size]);
 
     // set up RAMDAC identification
@@ -526,7 +526,16 @@ uint32_t AtiMach64Gx::read(uint32_t rgn_start, uint32_t offset, int size)
             return read_mem(&this->vram_ptr[offset], size);
         }
         if (offset >= this->mm_regs_offset) {
-            return BYTESWAP_SIZED(read_reg(offset - this->mm_regs_offset, size), size);
+            uint32_t value = read_reg(offset - this->mm_regs_offset, size);
+            #if 0
+            LOG_F(
+                INFO,
+                "ATIMach64 Read: offset=%x, value=%x, size=%x",
+                offset - mm_regs_offset,
+                BYTESWAP_SIZED(value, size),
+                size);
+            #endif
+            return BYTESWAP_SIZED(value, size);
         }
         return 0;
     }
@@ -548,6 +557,7 @@ void AtiMach64Gx::write(uint32_t rgn_start, uint32_t offset, uint32_t value, int
             return write_mem(&this->vram_ptr[offset], value, size);
         }
         if (offset >= this->mm_regs_offset) {
+            //LOG_F(INFO, "ATIMach64 Write: offset=%x, value=%x, size=%x", offset - mm_regs_offset, BYTESWAP_SIZED(value, size), size);
             return write_reg(offset - this->mm_regs_offset, BYTESWAP_SIZED(value, size), size);
         }
         return;
@@ -636,7 +646,12 @@ void AtiMach64Gx::crtc_update()
 
     static uint8_t bits_per_pixel[8] = {0, 0, 4, 8, 16, 24, 32, 0};
 
-    int new_fb_pitch = extract_bits<uint32_t>(this->regs[ATI_CRTC_OFF_PITCH], ATI_CRTC_PITCH, ATI_CRTC_PITCH_size) * bits_per_pixel[this->pixel_format];
+    int new_fb_pitch_reg = extract_bits<uint32_t>(this->regs[ATI_CRTC_OFF_PITCH], ATI_CRTC_PITCH, ATI_CRTC_PITCH_size);
+    // HACK: should not be zero!
+    if (new_fb_pitch_reg == 0) {
+        new_fb_pitch_reg = active_width / 8; // "Display pitch in pixels * 8"
+    }
+    int new_fb_pitch = new_fb_pitch_reg * bits_per_pixel[this->pixel_format];
     if (new_fb_pitch != this->fb_pitch) {
         this->fb_pitch = new_fb_pitch;
         need_recalc = true;
@@ -699,6 +714,28 @@ void AtiMach64Gx::crtc_update()
     default:
         LOG_F(ERROR, "%s: unsupported pixel format %d", this->name.c_str(), this->pixel_format);
     }
+
+    LOG_F(INFO, "%s: primary CRT controller enabled:", this->name.c_str());
+    LOG_F(
+        INFO,
+        "Video mode: %s",
+        bit_set(this->regs[ATI_CRTC_GEN_CNTL], ATI_CRTC_EXT_DISP_EN) ? "extended" : "VGA");
+    LOG_F(INFO, "Video width: %d px", this->active_width);
+    LOG_F(INFO, "Video height: %d px", this->active_height);
+    verbose_pixel_format(0);
+    //LOG_F(INFO, "VPLL frequency: %f MHz", vpll_freq * 1e-6);
+    LOG_F(INFO, "Pixel (dot) clock: %f MHz", this->pixel_clock * 1e-6);
+    LOG_F(INFO, "Refresh rate: %f Hz", this->refresh_rate);
+    LOG_F(
+        INFO,
+        "Framebuffer offset: %x",
+        extract_bits<uint32_t>(this->regs[ATI_CRTC_OFF_PITCH], ATI_CRTC_OFFSET, ATI_CRTC_OFFSET_size) *
+            8);
+    LOG_F(
+        INFO,
+        "Framebuffer pitch: %x (%x)",
+        new_fb_pitch_reg,
+        fb_pitch);
 
     this->stop_refresh_task();
     this->start_refresh_task();
@@ -768,7 +805,7 @@ int AtiMach64Gx::device_postinit()
 #endif
             0;
 
-        LOG_F(WARNING, "%s: irq_line_state:%d do_interrupt:%d CRTC_INT_CNTL:%08x", this->name.c_str(), irq_line_state, do_interrupt, this->regs[ATI_CRTC_INT_CNTL]);
+        //LOG_F(WARNING, "%s: irq_line_state:%d do_interrupt:%d CRTC_INT_CNTL:%08x", this->name.c_str(), irq_line_state, do_interrupt, this->regs[ATI_CRTC_INT_CNTL]);
 
         if (do_interrupt) {
             this->pci_interrupt(irq_line_state);
@@ -783,6 +820,7 @@ void AtiMach64Gx::rgb514_write_reg(uint8_t reg_addr, uint8_t value)
     switch (reg_addr) {
     case Rgb514::CLUT_ADDR_WR:
         this->clut_index = value;
+        this->comp_index = 0;
         break;
     case Rgb514::CLUT_DATA:
         this->clut_color[this->comp_index++] = value;
