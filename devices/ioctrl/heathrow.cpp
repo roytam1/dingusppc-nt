@@ -466,9 +466,9 @@ void HeathrowIC::ack_int(uint32_t irq_id, uint8_t irq_line_state)
     unsigned long irq_number = 0;
     if (!IS_INT1(irq_id)) { // does this irq_id belong to the second set?
         IRQ_ID_TO_INT2_MASK(irq_id);
+#if 0
         _BitScanReverse(&irq_number, irq_id);
         irq_number += 32;
-#if 0
         LOG_F(INFO, "%s: native interrupt events:%08x.%08x levels:%08x.%08x change2:%08x state:%d", this->name.c_str(), this->int_events1, this->int_events2, this->int_levels1, this->int_levels2, irq_id, irq_line_state);
 #endif
         // native mode:   set IRQ bits in int_events2 on a 0-to-1 transition
@@ -499,7 +499,9 @@ void HeathrowIC::ack_int(uint32_t irq_id, uint8_t irq_line_state)
         }
     } else {
         IRQ_ID_TO_INT1_MASK(irq_id);
+#if 0
         _BitScanReverse(&irq_number, irq_id);
+#endif
         // native mode:   set IRQ bits in int_events1 on a 0-to-1 transition
         // emulated mode: set IRQ bits in int_events1 on all transitions
 #if 0
