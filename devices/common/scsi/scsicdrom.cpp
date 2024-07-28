@@ -32,19 +32,13 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 using namespace std;
 
-static char cdrom_vendor_sony_id[] = "SONY    ";
-static char cdu8003a_product_id[]  = "CD-ROM CDU-8003A";
-static char cdu8003a_revision_id[] = "1.9a";
-
 ScsiCdrom::ScsiCdrom(std::string name, int my_id) : CdromDrive(), ScsiDevice(name, my_id)
 {
-    this->pre_xfer_action  = nullptr;
-    this->post_xfer_action = nullptr;
 }
 
 void ScsiCdrom::process_command()
 {
-    uint32_t lba, xfer_len;
+    uint32_t lba;
 
     this->pre_xfer_action  = nullptr;
     this->post_xfer_action = nullptr;
@@ -90,8 +84,7 @@ void ScsiCdrom::process_command()
         this->illegal_command(cmd);
         break;
     case ScsiCommand::MODE_SELECT_6:
-        this->incoming_size = cmd[4];
-        this->switch_phase(ScsiPhase::DATA_OUT);
+        this->mode_select_6(cmd[4]);
         break;
     case ScsiCommand::RELEASE_UNIT:
         this->illegal_command(cmd);
@@ -100,7 +93,7 @@ void ScsiCdrom::process_command()
         this->illegal_command(cmd);
         break;
     case ScsiCommand::MODE_SENSE_6:
-        this->mode_sense();
+        this->mode_sense_6();
         break;
     case ScsiCommand::START_STOP_UNIT:
         this->illegal_command(cmd);
@@ -119,12 +112,11 @@ void ScsiCdrom::process_command()
         this->read_capacity_10();
         break;
     case ScsiCommand::READ_10:
-        lba      = READ_DWORD_BE_U(&cmd[2]);
-        xfer_len = READ_WORD_BE_U(&cmd[7]);
+        lba = READ_DWORD_BE_U(&cmd[2]);
         if (cmd[1] & 1) {
             ABORT_F("%s: RelAdr bit set in READ_10", this->name.c_str());
         }
-        read(lba, xfer_len, 10);
+        read(lba, READ_WORD_BE_U(&cmd[7]), 10);
         break;
     case ScsiCommand::WRITE_10:
         this->illegal_command(cmd);
@@ -184,8 +176,11 @@ bool ScsiCdrom::get_more_data() {
     return this->data_size != 0;
 }
 
-void ScsiCdrom::read(const uint32_t lba, uint16_t nblocks, const uint8_t cmd_len)
+void ScsiCdrom::read(uint32_t lba, uint16_t nblocks, uint8_t cmd_len)
 {
+    if (!check_lun())
+        return;
+
     if (cmd_len == 6 && nblocks == 0)
         nblocks = 256;
 
@@ -223,9 +218,9 @@ void ScsiCdrom::inquiry() {
     this->data_buf[5] =    0;
     this->data_buf[6] =    0;
     this->data_buf[7] = 0x18; // supports synchronous xfers and linked commands
-    std::memcpy(&this->data_buf[8],  cdrom_vendor_sony_id, 8);
-    std::memcpy(&this->data_buf[16], cdu8003a_product_id, 16);
-    std::memcpy(&this->data_buf[32], cdu8003a_revision_id, 4);
+    std::memcpy(&this->data_buf[8],  vendor_info, 8);
+    std::memcpy(&this->data_buf[16], prod_info, 16);
+    std::memcpy(&this->data_buf[32], rev_info, 4);
 
     this->bytes_out = 36;
     this->msg_buf[0] = ScsiMessage::COMMAND_COMPLETE;
@@ -235,12 +230,10 @@ void ScsiCdrom::inquiry() {
 
 static char Apple_Copyright_Page_Data[] = "APPLE COMPUTER, INC   ";
 
-void ScsiCdrom::mode_sense()
+void ScsiCdrom::mode_sense_6()
 {
     uint8_t page_code = this->cmd_buf[2] & 0x3F;
     //uint8_t alloc_len = this->cmd_buf[4];
-
-    int num_blocks = this->size_blocks;
 
     this->data_buf[ 0] =   13; // initial data size
     this->data_buf[ 1] =    0; // medium type
@@ -248,9 +241,9 @@ void ScsiCdrom::mode_sense()
     this->data_buf[ 3] =    8; // block description length
 
     this->data_buf[ 4] =    0; // density code
-    this->data_buf[ 5] = (num_blocks >> 16) & 0xFFU;
-    this->data_buf[ 6] = (num_blocks >>  8) & 0xFFU;
-    this->data_buf[ 7] = (num_blocks      ) & 0xFFU;
+    this->data_buf[ 5] = (this->size_blocks >> 16) & 0xFFU;
+    this->data_buf[ 6] = (this->size_blocks >>  8) & 0xFFU;
+    this->data_buf[ 7] = (this->size_blocks      ) & 0xFFU;
     this->data_buf[ 8] =    0;
     this->data_buf[ 9] =    0;
     this->data_buf[10] = (this->block_size >> 8) & 0xFFU;
@@ -285,6 +278,19 @@ void ScsiCdrom::mode_sense()
     this->msg_buf[0] = ScsiMessage::COMMAND_COMPLETE;
 
     this->switch_phase(ScsiPhase::DATA_IN);
+}
+
+int ScsiCdrom::mode_select_6(uint8_t param_len)
+{
+    if (param_len == 0) {
+        return 0x0;
+    }
+    else {
+        LOG_F(ERROR, "Mode Select calling for param length of: %d", param_len);
+        this->incoming_size = param_len;
+        this->switch_phase(ScsiPhase::DATA_OUT);
+        return param_len;
+    }
 }
 
 void ScsiCdrom::read_toc()
@@ -378,16 +384,13 @@ void ScsiCdrom::read_capacity_10()
         return;
     }
 
-    int last_lba = this->size_blocks - 1;
+    if (!check_lun())
+        return;
+    
+    int last_lba = (int)this->size_blocks - 1;
 
-    this->data_buf[0] = (last_lba >> 24) & 0xFFU;
-    this->data_buf[1] = (last_lba >> 16) & 0xFFU;
-    this->data_buf[2] = (last_lba >>  8) & 0xFFU;
-    this->data_buf[3] = (last_lba >>  0) & 0xFFU;
-    this->data_buf[4] = 0;
-    this->data_buf[5] = 0;
-    this->data_buf[6] = (this->block_size >> 8) & 0xFFU;
-    this->data_buf[7] = this->block_size & 0xFFU;
+    WRITE_DWORD_BE_A(&this->data_buf[0], last_lba);
+    WRITE_DWORD_BE_A(&this->data_buf[4], this->block_size);
 
     this->bytes_out  = 8;
     this->msg_buf[0] = ScsiMessage::COMMAND_COMPLETE;

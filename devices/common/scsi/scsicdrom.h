@@ -45,7 +45,9 @@ protected:
     int     test_unit_ready();
     void    read(uint32_t lba, uint16_t nblocks, uint8_t cmd_len);
     void    inquiry();
-    void    mode_sense();
+    int     mode_select_6(uint8_t param_len);
+
+    void    mode_sense_6();
     void    read_toc();
     void    read_capacity_10();
 
@@ -53,6 +55,11 @@ private:
     bool    eject_allowed = true;
     int     bytes_out = 0;
     uint8_t data_buf[2048] = {};
+
+    //inquiry info
+    char vendor_info[9] = "SONY    ";
+    char prod_info[17]  = "CD-ROM CDU-8003A";
+    char rev_info[5]    = "1.9a";
 };
 
 #endif // SCSI_CDROM_H

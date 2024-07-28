@@ -46,17 +46,12 @@ void ScsiHardDisk::insert_image(std::string filename) {
     uint64_t tb = (this->img_size + this->sector_size - 1) / this->sector_size;
     this->total_blocks = static_cast<int>(tb);
     if (this->total_blocks < 0 || tb != this->total_blocks) {
-        ABORT_F("ScsiHardDisk: file size is too large");
+        ABORT_F("%s: file size is too large", this->name.c_str());
     }
 }
 
 void ScsiHardDisk::process_command() {
-    uint32_t lba          = 0;
-    uint16_t transfer_len = 0;
-    uint16_t alloc_len    = 0;
-
-    uint8_t  page_code    = 0;
-    uint8_t  subpage_code = 0;
+    uint32_t lba;
 
     this->pre_xfer_action  = nullptr;
     this->post_xfer_action = nullptr;
@@ -69,14 +64,13 @@ void ScsiHardDisk::process_command() {
 
     switch (cmd[0]) {
     case ScsiCommand::TEST_UNIT_READY:
-        test_unit_ready();
+        this->test_unit_ready();
         break;
     case ScsiCommand::REWIND:
         this->illegal_command(cmd);
         break;
     case ScsiCommand::REQ_SENSE:
-        alloc_len = cmd[4];
-        req_sense(alloc_len);
+        this->req_sense(cmd[4]);
         break;
     case ScsiCommand::FORMAT_UNIT:
         this->format();
@@ -86,13 +80,11 @@ void ScsiHardDisk::process_command() {
         break;
     case ScsiCommand::READ_6:
         lba = ((cmd[1] & 0x1F) << 16) + (cmd[2] << 8) + cmd[3];
-        transfer_len = cmd[4];
-        read(lba, transfer_len, 6);
+        this->read(lba, cmd[4], 6);
         break;
     case ScsiCommand::WRITE_6:
-        lba          = ((cmd[1] & 0x1F) << 16) + (cmd[2] << 8) + cmd[3];
-        transfer_len = cmd[4];
-        write(lba, transfer_len, 6);
+        lba = ((cmd[1] & 0x1F) << 16) + (cmd[2] << 8) + cmd[3];
+        this->write(lba, cmd[4], 6);
         break;
     case ScsiCommand::SEEK_6:
         this->illegal_command(cmd);
@@ -124,18 +116,23 @@ void ScsiHardDisk::process_command() {
     case ScsiCommand::SEND_DIAGS:
         this->illegal_command(cmd);
         break;
+    case ScsiCommand::PREVENT_ALLOW_MEDIUM_REMOVAL:
+        this->eject_allowed = (cmd[4] & 1) == 0;
+        this->switch_phase(ScsiPhase::STATUS);
+        break;
     case ScsiCommand::READ_CAPACITY_10:
         this->read_capacity_10();
         break;
     case ScsiCommand::READ_10:
-        lba          = (cmd[2] << 24) + (cmd[3] << 16) + (cmd[4] << 8) + cmd[5];
-        transfer_len = (cmd[7] << 8) + cmd[8];
-        read(lba, transfer_len, 10);
+        lba = READ_DWORD_BE_U(&cmd[2]);
+        if (cmd[1] & 1) {
+            ABORT_F("%s: RelAdr bit set in READ_10", this->name.c_str());
+        }
+        this->read(lba, READ_WORD_BE_U(&cmd[7]), 10);
         break;
     case ScsiCommand::WRITE_10:
-        lba          = (cmd[2] << 24) + (cmd[3] << 16) + (cmd[4] << 8) + cmd[5];
-        transfer_len = (cmd[7] << 8) + cmd[8];
-        write(lba, transfer_len, 10);
+        lba = READ_DWORD_BE_U(&cmd[2]);
+        this->write(lba, READ_WORD_BE_U(&cmd[7]), 10);
         this->switch_phase(ScsiPhase::DATA_OUT);
         break;
     case ScsiCommand::VERIFY_10:
@@ -192,7 +189,6 @@ bool ScsiHardDisk::prepare_data() {
         LOG_F(WARNING, "%s: unexpected phase in prepare_data", this->name.c_str());
         return false;
     }
-
     return true;
 }
 
@@ -273,10 +269,7 @@ void ScsiHardDisk::mode_sense_6() {
     this->data_buf[ 2] =  0; // medium is write enabled
     this->data_buf[ 3] =  8; // block description length
 
-    this->data_buf[ 4] =  0; // density code
-    this->data_buf[ 5] =  (this->total_blocks >> 16) & 0xFFU;
-    this->data_buf[ 6] =  (this->total_blocks >>  8) & 0xFFU;
-    this->data_buf[ 7] =  (this->total_blocks      ) & 0xFFU;
+    WRITE_DWORD_BE_A(&this->data_buf[4], this->total_blocks);
     WRITE_DWORD_BE_A(&this->data_buf[8], this->sector_size);
 
     this->data_buf[12] = page_code;
@@ -330,17 +323,19 @@ void ScsiHardDisk::read_capacity_10() {
         return;
     }
 
+    if (!check_lun())
+        return;
+
     uint32_t last_lba = this->total_blocks - 1;
     uint32_t blk_len  = this->sector_size;
 
-    WRITE_DWORD_BE_A(&data_buf[0], last_lba);
-    WRITE_DWORD_BE_A(&data_buf[4], blk_len);
+    WRITE_DWORD_BE_A(&this->data_buf[0], last_lba);
+    WRITE_DWORD_BE_A(&this->data_buf[4], blk_len);
 
     this->bytes_out = 8;
 
     this->switch_phase(ScsiPhase::DATA_IN);
 }
-
 
 void ScsiHardDisk::format() {
     LOG_F(WARNING, "%s: attempt to format the disk!", this->name.c_str());
@@ -354,9 +349,12 @@ void ScsiHardDisk::format() {
 }
 
 void ScsiHardDisk::read(uint32_t lba, uint16_t transfer_len, uint8_t cmd_len) {
+    if (!check_lun())
+        return;
+
     uint32_t transfer_size = transfer_len;
 
-    std::memset(data_buf, 0, sizeof(data_buf));
+    std::memset(this->data_buf, 0, sizeof(this->data_buf));
 
     if (cmd_len == 6 && transfer_len == 0) {
         transfer_size = 256;
@@ -365,7 +363,7 @@ void ScsiHardDisk::read(uint32_t lba, uint16_t transfer_len, uint8_t cmd_len) {
     transfer_size *= this->sector_size;
     uint64_t device_offset = (uint64_t)lba * this->sector_size;
 
-    this->disk_img.read(data_buf, device_offset, transfer_size);
+    this->disk_img.read(this->data_buf, device_offset, transfer_size);
 
     this->bytes_out = transfer_size;
 
