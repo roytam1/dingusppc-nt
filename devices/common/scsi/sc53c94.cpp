@@ -215,14 +215,14 @@ void Sc53C94::pseudo_dma_write(uint16_t data) {
 
 void Sc53C94::update_command_reg(uint8_t cmd)
 {
-    if (this->on_reset && (cmd & 0x7F) != CMD_NOP) {
+    if (this->on_reset && (cmd & CMD_OPCODE) != CMD_NOP) {
         LOG_F(WARNING, "%s: command register blocked after RESET!", this->name.c_str());
         return;
     }
 
     // NOTE: Reset Device (chip), Reset Bus and DMA Stop commands execute
     // immediately while all others are placed into the command FIFO
-    switch (cmd & 0x7F) {
+    switch (cmd & CMD_OPCODE) {
     case CMD_RESET_DEVICE:
     case CMD_RESET_BUS:
     case CMD_DMA_STOP:
@@ -280,9 +280,14 @@ void Sc53C94::exec_command()
         // assert RST line
         this->bus_obj->assert_ctrl_line(this->my_bus_id, SCSI_CTRL_RST);
         // release RST line after 25 us
+        if (my_timer_id) {
+            TimerManager::get_instance()->cancel_timer(this->my_timer_id);
+            my_timer_id = 0;
+        }
         my_timer_id = TimerManager::get_instance()->add_oneshot_timer(
             USECS_TO_NSECS(25),
             [this]() {
+                my_timer_id = 0;
                 this->bus_obj->release_ctrl_line(this->my_bus_id, SCSI_CTRL_RST);
         });
         if (!(config1 & 0x40)) {
@@ -376,6 +381,8 @@ void Sc53C94::exec_next_command()
     }
 }
 
+#define DATA_FIFO_MAX   16
+
 void Sc53C94::fifo_push(const uint8_t data)
 {
     if (this->data_fifo_pos < DATA_FIFO_MAX) {
@@ -404,10 +411,16 @@ uint8_t Sc53C94::fifo_pop()
 
 void Sc53C94::seq_defer_state(uint64_t delay_ns)
 {
+    if (seq_timer_id) {
+        TimerManager::get_instance()->cancel_timer(this->seq_timer_id);
+        seq_timer_id = 0;
+    }
+
     seq_timer_id = TimerManager::get_instance()->add_oneshot_timer(
         delay_ns,
         [this]() {
             // re-enter the sequencer with the state specified in next_state
+            this->seq_timer_id = 0;
             this->cur_state = this->next_state;
             this->sequencer();
     });
@@ -562,7 +575,7 @@ void Sc53C94::update_irq()
     uint8_t new_irq = !!(this->int_status != 0);
     if (new_irq != this->irq) {
         this->irq = new_irq;
-        this->status = (this->status & 0x7F) | (new_irq << 7);
+        this->status = (this->status & ~STAT_INT) | (new_irq << 7);
         this->int_ctrl->ack_int(this->irq_id, new_irq);
     }
 }
@@ -574,6 +587,7 @@ void Sc53C94::notify(ScsiMsg msg_type, int param)
         if (this->target_id == param) {
             // cancel selection timeout timer
             TimerManager::get_instance()->cancel_timer(this->seq_timer_id);
+            seq_timer_id = 0;
             this->cur_state = SeqState::SEL_END;
             this->sequencer();
         } else {
