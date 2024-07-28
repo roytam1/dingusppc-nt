@@ -277,14 +277,14 @@ uint32_t ControlVideo::read(uint32_t rgn_start, uint32_t offset, int size)
             } // if not VRAM_WIDE_MODE
         }
 
-        LOG_F(ERROR, "%s: read from unmapped aperture address 0x%X", this->name.c_str(),
+        LOG_F(ERROR, "%s: read from little-endian aperture address 0x%X", this->name.c_str(),
               this->vram_base + offset);
         return 0;
     }
 
-    uint32_t value;
-
     if (rgn_start == this->regs_base) {
+        uint32_t value;
+
         switch (offset >> 4) {
         case ControlRegs::CUR_LINE:
             value = 0; // current active video line should relate this to refresh rate
@@ -417,7 +417,7 @@ void ControlVideo::write(uint32_t rgn_start, uint32_t offset, uint32_t value, in
                 } // switch
             } // if not VRAM_WIDE_MODE
         } else {
-            LOG_F(ERROR, "%s: write to unmapped aperture address 0x%X", this->name.c_str(),
+            LOG_F(ERROR, "%s: write to little-endian aperture address 0x%X", this->name.c_str(),
                   this->vram_base + offset);
         }
         return;
