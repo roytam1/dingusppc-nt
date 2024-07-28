@@ -95,7 +95,7 @@ ViaCuda::ViaCuda() {
         .tm_mday = 1,
         .tm_mon  = 1 - 1,
         .tm_year = 1904 - 1900,
-        .tm_isdst = -1 // Use DST value from local time zone
+        .tm_isdst = 1 // -1 = Use DST value from local time zone; 0 = not summer; 1 = is summer time
     };
     mac_epoch = std::chrono::system_clock::from_time_t(std::mktime(&tm));
 }
@@ -499,7 +499,7 @@ void ViaCuda::process_packet() {
         for (int i = 0; i < this->in_count; i++) {
             LOG_F(9, "0x%X ,", this->in_buf[i]);
         }
-        pseudo_command(this->in_buf[1], this->in_count - 2);
+        pseudo_command();
         break;
     default:
         LOG_F(ERROR, "Cuda: unsupported packet type = %d", this->in_buf[0]);
@@ -543,24 +543,24 @@ void ViaCuda::autopoll_handler() {
 
         // draw guest system's attention
         schedule_sr_int(USECS_TO_NSECS(30));
-    } else if (this->one_sec_mode == 3) {
+    } else if (this->one_sec_mode != 0) {
         uint32_t this_time = calc_real_time();
         if (this_time != this->last_time) {
-
-            if ((this->last_time & 15) == 0) {
-                /*
-                    FIXME: This doesn't do anything in Mac OS 8.6.
-                    A real Mac probably doesn't do this. So why do I?
-                    supermario checks for packets that are not PKT_TICK
-                    to set the time but I don't know which Mac OS versions
-                    have that code and if that code is triggered by this.
-                */
-                response_header(9, 0);
-                this->out_buf[3] = CUDA_GET_REAL_TIME;
-                uint32_t real_time = this_time + time_offset;
-                WRITE_DWORD_BE_U(&this->out_buf[3], real_time);
-                this->out_count = 7;
-            } else {
+            /*
+                We'll send a time packet every 4
+                seconds just in case we get out of
+                sync.
+            */
+            bool send_time = !(this->last_time & 3);
+            if (send_time || this->one_sec_mode < 3) {
+                response_header(CUDA_PKT_PSEUDO, 0);
+                this->out_buf[2] = CUDA_GET_REAL_TIME;
+                if (send_time || this->one_sec_mode == 1) {
+                    uint32_t real_time = this_time + this->time_offset;
+                    WRITE_DWORD_BE_U(&this->out_buf[3], real_time);
+                    this->out_count = 7;
+                }
+            } else if (this->one_sec_mode == 3) {
                 response_header(CUDA_PKT_TICK, 0);
                 this->out_count = 1;
             }
@@ -576,9 +576,10 @@ void ViaCuda::autopoll_handler() {
     }
 }
 
-void ViaCuda::pseudo_command(int cmd, int data_count) {
+void ViaCuda::pseudo_command() {
     uint16_t    addr;
     int         i;
+    int         cmd = this->in_buf[1];
 
     switch (cmd) {
     case CUDA_START_STOP_AUTOPOLL:
@@ -612,7 +613,7 @@ void ViaCuda::pseudo_command(int cmd, int data_count) {
     case CUDA_GET_REAL_TIME: {
         response_header(CUDA_PKT_PSEUDO, 0);
         uint32_t this_time = this->calc_real_time();
-        uint32_t real_time = this_time + time_offset;
+        uint32_t real_time = this_time + this->time_offset;
         WRITE_DWORD_BE_U(&this->out_buf[3], real_time);
         this->out_count = 7;
         break;
