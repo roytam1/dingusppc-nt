@@ -207,7 +207,7 @@ void ScsiCdrom::inquiry() {
     }
 
     if (alloc_len > 36) {
-        LOG_F(WARNING, "%s: more than 36 bytes requested in INQUIRY", this->name.c_str());
+        LOG_F(ERROR, "%s: more than 36 bytes requested in INQUIRY", this->name.c_str());
     }
 
     this->data_buf[0] =    5; // device type: CD-ROM
@@ -221,8 +221,17 @@ void ScsiCdrom::inquiry() {
     std::memcpy(&this->data_buf[8],  vendor_info, 8);
     std::memcpy(&this->data_buf[16], prod_info, 16);
     std::memcpy(&this->data_buf[32], rev_info, 4);
+    //std::memcpy(&this->data_buf[36], serial_number, 8);
+    //etc.
 
-    this->bytes_out = 36;
+    if (alloc_len < 36) {
+        LOG_F(ERROR, "Inappropriate Allocation Length: %d", alloc_len);
+    }
+    else {
+        memset(&this->data_buf[36], 0, alloc_len - 36);
+    }
+
+    this->bytes_out = alloc_len;
     this->msg_buf[0] = ScsiMessage::COMMAND_COMPLETE;
 
     this->switch_phase(ScsiPhase::DATA_IN);
@@ -271,7 +280,15 @@ void ScsiCdrom::mode_sense_6()
         this->data_buf[17] = 'p';
         break;
     default:
-        ABORT_F("%s: unsupported page %d in MODE_SENSE_6", this->name.c_str(), page_code);
+        LOG_F(WARNING, "%s: unsupported page 0x%02x in MODE_SENSE_6", this->name.c_str(), page_code);
+        this->status = ScsiStatus::CHECK_CONDITION;
+        this->sense  = ScsiSense::ILLEGAL_REQ;
+        this->asc    = 0x24; // Invalid Field in CDB
+        this->ascq   = 0;
+        this->sksv   = 0xc0; // sksv=1, C/D=Command, BPV=0, BP=0
+        this->field  = 2;
+        this->switch_phase(ScsiPhase::STATUS);
+        return;
     }
 
     this->bytes_out = this->data_buf[0];
@@ -323,6 +340,10 @@ void ScsiCdrom::read_toc()
               start_track);
         this->status = ScsiStatus::CHECK_CONDITION;
         this->sense  = ScsiSense::ILLEGAL_REQ;
+        this->asc    = 0x24; // Invalid Field in CDB
+        this->ascq   = 0;
+        this->sksv   = 0xc0; // sksv=1, C/D=Command, BPV=0, BP=0
+        this->field  = 6; // offset of start_track
         this->switch_phase(ScsiPhase::STATUS);
         return;
     }
@@ -380,6 +401,10 @@ void ScsiCdrom::read_capacity_10()
         LOG_F(ERROR, "%s: non-zero LBA for PMI=0", this->name.c_str());
         this->status = ScsiStatus::CHECK_CONDITION;
         this->sense  = ScsiSense::ILLEGAL_REQ;
+        this->asc    = 0x24; // Invalid Field in CDB
+        this->ascq   = 0;
+        this->sksv   = 0xc0; // sksv=1, C/D=Command, BPV=0, BP=0
+        this->field  = 8;
         this->switch_phase(ScsiPhase::STATUS);
         return;
     }
