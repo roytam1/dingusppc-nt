@@ -2,16 +2,27 @@
 
 ## Implemented Features
 
-* Interpreter (with FPU and MMU support)
+* Interpreter (with 601, FPU, and MMU support)
 * IDE and SCSI 
 * Floppy disk image reading (Raw, Disk Copy 4.2, WOZ v1 and v2)
 * ADB mouse and keyboard emulation
 * Some audio support
 * Basic video output support (i.e. ATI Rage, Control, Platinum)
 
+## Known Working OSes
+
+* Disk Tools (7.1.2 - 8.5) 
+* Mac OS 7.1.2 - 9.2.2 (from CD)
+* Mac OS 7.5.3 - 9.2.2 (from Hard Disk)
+* OpenDarwin 6.6.2
+
+## Windows
+
+DingusPPC uses two windows when booted up; a command line window and a monitor window to display the machine.
+
 ## Commands
 
-DingusPPC is operated using the command line interface. As such, we will list the commands as required.
+DingusPPC is operated using the command line interface. As such, we will list the commands as required. These commands are separated by spaces.
 
 ```
 -r, --realtime
@@ -23,7 +34,7 @@ Run the emulator in runtime (using the interpeter).
 -d, --debugger
 ```
 
-Enter the interactive debugger. The user may also enter the debugger at any point by pressing Control and C.
+Enter the interactive debugger. The user may also enter the debugger at any point by pressing Control and C, when the command line window is selected.
 
 ```
 -b, --bootrom TEXT:FILE
@@ -52,19 +63,25 @@ Shows the configurable properties, such as the selected disc image and the ram b
 ### Properties
 
 ```
-rambank1_size
-rambank2_size
-rambank3_size
-rambank4_size
+rambank1_size X
+rambank2_size X
+rambank3_size X
+rambank4_size X
 ```
 
-Set the RAM sizes to use
+Set the RAM sizes to use, with X being an integer of a power of 2 up to 256.
 
 ```
 fdd_img
 ```
 
 Set the floppy disk image
+
+```
+fdd_wr_prot=1
+```
+
+Set the floppy to read-only
 
 ```
 hdd_img
@@ -91,8 +108,8 @@ emmo
 Access the factory tests
 
 ```
-serial_backend stdio
-serial_backend socket
+serial_backend=stdio
+serial_backend=socket
 ```
 
 Change where the output of OpenFirmware is directed to, either to the command line (with stdio) or a Unix socket (unavailable in Windows builds). OpenFirmware 1.x outputs here by default.
@@ -122,11 +139,16 @@ Currently, ISO images are supported. However, support is not yet implemented for
 
 ### Hard Disks
 
-Because Sheepshaver, Basilisk II, and Mini vMac operate on raw disks, it is required to a program such as BlueSCSI to make their hard disk images work in an emulator like DingusPPC. This is because the Mac OS normally requires certain values in the hard disks that these emulators don't normally 
+Because Sheepshaver, Basilisk II, and Mini vMac operate on raw disks, it is required to a program such as BlueSCSI to make their hard disk images work in an emulator like DingusPPC. This is because the Mac OS normally requires certain values in the hard disks that these emulators don't normally insert into the images. You may also need a third-party utility to create an HFS or HFS+ disk image.
+
+### OS Support
+
+Currently, the Power Mac 6100 cannot boot any OS image containing Mac OS 8.0 or newer.
 
 ### Currently Unimplemented Features
 
 * JIT compiler
+* AltiVec
 * 3D acceleration support
 * Additional ADB and USB peripherals
 * Networking
