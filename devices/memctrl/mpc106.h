@@ -70,6 +70,11 @@ enum {
     MEMGO = 1 << 19,
 };
 
+/* PICR1 bit definitions. */
+enum {
+    PICR1_LE_MODE = 0x20
+};
+
 class MPC106 : public MemCtrlBase, public PCIDevice, public PCIHost {
 public:
     MPC106();
@@ -83,6 +88,7 @@ public:
     void write(uint32_t rgn_start, uint32_t offset, uint32_t value, int size);
 
     virtual void pci_interrupt(uint8_t irq_line_state, PCIBase *dev);
+    bool needs_swap_endian(bool is_mmio) override;
 
     int device_postinit();
 
@@ -97,6 +103,10 @@ private:
     inline void cfg_setup(uint32_t offset, int size, int &bus_num, int &dev_num,
                           int &fun_num, uint8_t &reg_offs, AccessDetails &details,
                           PCIBase *&device);
+
+    inline bool needs_swap_endian_pci() {
+        return (picr1 & PICR1_LE_MODE) != 0;
+    }
 
     uint32_t config_addr;
 

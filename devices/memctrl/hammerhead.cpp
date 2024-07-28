@@ -57,21 +57,27 @@ uint32_t HammerheadCtrl::read(uint32_t rgn_start, uint32_t offset, int size)
 
     switch (offset) {
     case HammerheadReg::CPU_ID:
+        LOG_F(INFO, "Hammerhead: CPU_ID read");
         result = HH_CPU_ID_TNT;
         break;
     case HammerheadReg::MOTHERBOARD_ID:
+        LOG_F(INFO, "Hammerhead: MOTHERBOARD_ID read");
         result = (this->mb_id << 5) | (this->rom_type << 4);
         break;
     case HammerheadReg::CPU_SPEED:
+        LOG_F(INFO, "Hammerhead: CPU_SPEED read");
         result = this->bus_speed << 5;
         break;
     case HammerheadReg::ARBITER_CONFIG:
+        LOG_F(INFO, "Hammerhead: ARBITER_CONFIG read");
         result = this->arb_config;
         break;
     case HammerheadReg::WHO_AM_I:
+        LOG_F(INFO, "Hammerhead: WHO_AM_I read");
         result = BM_PRIMARY_CPU << 3;
         break;
     case HammerheadReg::L2_CACHE_CONFIG:
+        LOG_F(INFO, "Hammerhead: L2_CACHE_CONFIG read");
         result = 0; // say there is no L2 cache
         break;
     default:
@@ -118,6 +124,7 @@ void HammerheadCtrl::write(uint32_t rgn_start, uint32_t offset, uint32_t value, 
         LOG_F(9, "%s: ROM_TIMING set to 0x%X", this->name.c_str(), value);
         break;
     case HammerheadReg::ARBITER_CONFIG:
+        LOG_F(9, "%s: ARBITER_CONFIG set to 0x%X", this->name.c_str(), value);
         this->arb_config = value;
         break;
     default:

@@ -25,6 +25,8 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #ifndef IMGFILE_H
 #define IMGFILE_H
 
+//#define _FILE_OFFSET_BITS 64
+
 #include <cstddef>
 #include <memory>
 #include <string>

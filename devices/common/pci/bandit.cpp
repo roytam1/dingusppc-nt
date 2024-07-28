@@ -72,6 +72,8 @@ uint32_t BanditPciDevice::pci_cfg_read(uint32_t reg_offs, AccessDetails &details
         return PCIDevice::pci_cfg_read(reg_offs, details);
     }
 
+    LOG_F(INFO, "Bandit: read config %08x", reg_offs);
+
     switch (reg_offs) {
     case BANDIT_ADDR_MASK:
         return this->addr_mask;
@@ -93,6 +95,8 @@ void BanditPciDevice::pci_cfg_write(uint32_t reg_offs, uint32_t value, AccessDet
         PCIDevice::pci_cfg_write(reg_offs, value, details);
         return;
     }
+
+    LOG_F(INFO, "Bandit: write config %08x = %08x", reg_offs, value);
 
     switch (reg_offs) {
     case BANDIT_ADDR_MASK:

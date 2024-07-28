@@ -112,6 +112,10 @@ void MPC106::pci_interrupt(uint8_t irq_line_state, PCIBase *dev) {
     }
 }
 
+bool MPC106::needs_swap_endian(bool is_mmio) {
+    return is_mmio && needs_swap_endian_pci();
+}
+
 uint32_t MPC106::read(uint32_t rgn_start, uint32_t offset, int size) {
     if (rgn_start == 0xFE000000) {
         return pci_io_read_broadcast(offset, size);
@@ -131,7 +135,7 @@ uint32_t MPC106::read(uint32_t rgn_start, uint32_t offset, int size) {
             // bytes 0 to 3 repeat
             return pci_conv_rd_data(value, value, details);
         }
-        LOG_READ_NON_EXISTENT_PCI_DEVICE();
+        //LOG_READ_NON_EXISTENT_PCI_DEVICE();
         return 0xFFFFFFFFUL; // PCI spec §6.1
     }
     return 0;

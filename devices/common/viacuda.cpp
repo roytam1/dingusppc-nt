@@ -191,7 +191,7 @@ void ViaCuda::write(int reg, uint8_t value) {
         break;
     case VIA_A:
     case VIA_ANH:
-        LOG_F(WARNING, "Attempted write to VIA Port A!");
+        LOG_F(WARNING, "Attempted write to VIA Port A! (%x) (%08x)", value, ppc_state.pc);
         break;
     case VIA_DIRB:
         LOG_F(9, "VIA_DIRB = 0x%X", value);
@@ -287,9 +287,12 @@ uint16_t ViaCuda::calc_counter_val(const uint16_t last_val, const uint64_t& last
 }
 
 void ViaCuda::print_enabled_ints() {
+    //return;
     const char* via_int_src[] = {"CA2", "CA1", "SR", "CB2", "CB1", "T2", "T1"};
 
     for (int i = 0; i < 7; i++) {
+        if (i == 2)
+            continue;
         if (this->_via_ier & (1 << i))
             LOG_F(INFO, "VIA %s interrupt enabled", via_int_src[i]);
     }
@@ -377,7 +380,7 @@ void ViaCuda::write(uint8_t new_state) {
 
     if (new_tip) {
         if (new_byteack) {
-            this->via_regs[VIA_B] |= CUDA_TREQ; // negate TREQ
+            this->via_regs[VIA_B] |= CUDA_TREQ;    // negate TREQ
             this->treq = 1;
 
             if (this->in_count) {
