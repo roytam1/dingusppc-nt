@@ -43,10 +43,20 @@ uint16_t AppleRamdac::iodev_read(uint32_t address) {
         case RamdacRegs::PLL_CTRL:
             return this->pll_cr;
         case RamdacRegs::VENDOR_ID:
-            return DACULA_VENDOR_SIERRA;
+            return this->dac_vendor;
         default:
             LOG_F(WARNING, "%s: read from unsupported multi-register at 0x%X",
                   this->name.c_str(), this->dac_addr);
+        }
+        break;
+    case RamdacRegs::CLUT_DATA:
+        if (this->comp_index == 0) {
+            this->get_clut_entry_cb(this->dac_addr, this->clut_color);
+        }
+        this->comp_index++;
+        if (this->comp_index >= 3) {
+            this->dac_addr++; // auto-increment CLUT address
+            this->comp_index = 0;
         }
         break;
     default:
@@ -60,6 +70,7 @@ void AppleRamdac::iodev_write(uint32_t address, uint16_t value) {
     switch(address) {
     case RamdacRegs::ADDRESS:
         this->dac_addr = value;
+        this->comp_index = 0;
         break;
     case RamdacRegs::CURSOR_CLUT:
         this->clut_color[this->comp_index++] = value;
@@ -116,6 +127,9 @@ void AppleRamdac::iodev_write(uint32_t address, uint16_t value) {
         }
         break;
     case RamdacRegs::CLUT_DATA:
+        if (this->comp_index == 0) {
+            this->get_clut_entry_cb(this->dac_addr, this->clut_color);
+        }
         this->clut_color[this->comp_index++] = value;
         if (this->comp_index >= 3) {
             this->set_clut_entry_cb(this->dac_addr, this->clut_color);
@@ -142,7 +156,15 @@ int AppleRamdac::get_dot_freq() {
     uint8_t p = this->clk_pn[this->pll_cr & 1] >> 5;
     uint8_t n = this->clk_pn[this->pll_cr & 1] & 0x1F;
 
-    double dot_freq = 14318180.0f * (double)m / ((double)n * (double)(1 << p));
+    double dot_freq;
+    if (this->dac_vendor == DACULA_VENDOR_OTHER)
+        dot_freq = 15000000.0f * (double)m / ((double)n + 2) / (double)(1 << p);
+    else if (this->dac_vendor == DACULA_VENDOR_SIERRA)
+        dot_freq = 14318180.0f * (double)m / ((double)n * (double)(1 << p));
+    else {
+        dot_freq = 14318180.0f * (double)m / (double)n / (double)(1 << p);
+        LOG_F(ERROR, "%s: unknown VENDOR_ID", this->name.c_str());
+    }
     return static_cast<int>(dot_freq + 0.5f);
 }
 
