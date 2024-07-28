@@ -1,6 +1,6 @@
 /*
 DingusPPC - The Experimental PowerPC Macintosh emulator
-Copyright (C) 2018-22 divingkatae and maximum
+Copyright (C) 2018-24 divingkatae and maximum
                       (theweirdo)     spatium
 
 (Contact divingkatae#1017 or powermax#2286 on Discord for more info)
@@ -40,12 +40,26 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 AthensClocks::AthensClocks(uint8_t dev_addr)
 {
+    set_name("Athens");
     supports_types(HWCompType::I2C_DEV);
 
     this->my_addr = dev_addr;
 
-    // set up power on values
+    // This initialization is not prescribed
+    // but let's set them to acceptable values anyway
+    this->regs[AthensRegs::D2] = 2;
+    this->regs[AthensRegs::N2] = 2;
+
+    // set P2_MUX2 on power up as follows:
+    // - dot clock VCO is disabled
+    // - dot clock = reference clock / 2
     this->regs[AthensRegs::P2_MUX2] = 0x62;
+}
+
+AthensClocks::AthensClocks(uint8_t dev_addr, const float crystal_freq)
+    : AthensClocks(dev_addr)
+{
+    this->xtal_freq = crystal_freq;
 }
 
 void AthensClocks::start_transaction()
@@ -55,7 +69,7 @@ void AthensClocks::start_transaction()
 
 bool AthensClocks::send_subaddress(uint8_t sub_addr)
 {
-    LOG_F(INFO, "Athens: subaddress set to 0x%X", sub_addr);
+    LOG_F(INFO, "%s: subaddress set to 0x%X", this->name.c_str(), sub_addr);
     return true;
 }
 
@@ -68,16 +82,14 @@ bool AthensClocks::send_byte(uint8_t data)
         break;
     case 1:
         if (this->reg_num >= ATHENS_NUM_REGS) {
-            LOG_F(WARNING, "Athens: invalid register number %d", this->reg_num);
+            LOG_F(WARNING, "%s: invalid register number %d", this->name.c_str(),
+                  this->reg_num);
             return false; // return NACK
         }
         this->regs[this->reg_num] = data;
-        if (reg_num == 3) {
-            LOG_F(INFO, "Athens: dot clock frequency set to %d Hz", get_dot_freq());
-        }
         break;
     default:
-        LOG_F(WARNING, "Athens: too much data received!");
+        LOG_F(WARNING, "%s: too much data received!", this->name.c_str());
         return false; // return NACK
     }
     return true;
@@ -102,7 +114,7 @@ int AthensClocks::get_dot_freq()
     };
 
     if (this->regs[AthensRegs::P2_MUX2] & 0xC0) {
-        LOG_F(INFO, "Athens: dot clock disabled");
+        LOG_F(INFO, "%s: dot clock disabled", this->name.c_str());
         return 0;
     }
 
@@ -114,29 +126,31 @@ int AthensClocks::get_dot_freq()
     int post_div = 1 << (3 - (this->regs[AthensRegs::P2_MUX2] & 3));
 
     if (std::find(D2_commons.begin(), D2_commons.end(), d2) == D2_commons.end()) {
-        LOG_F(WARNING, "Athens: untested D2 value %d", d2);
+        LOG_F(WARNING, "%s: untested D2 value %d", this->name.c_str(), d2);
     }
 
     if (std::find(N2_commons.begin(), N2_commons.end(), n2) == N2_commons.end()) {
-        LOG_F(WARNING, "Athens: untested N2 value %d", d2);
+        LOG_F(WARNING, "%s: untested N2 value %d", this->name.c_str(), d2);
     }
 
     int mux = (this->regs[AthensRegs::P2_MUX2] >> 4) & 3;
 
     switch (mux) {
     case 0: // clock source -> dot cock VCO
-        out_freq = ATHENS_XTAL * ((float)n2 / (float)(d2 * post_div));
+        out_freq = this->xtal_freq * ((float)n2 / (float)(d2 * post_div));
         break;
     case 1: // clock source -> system clock VCO
-        LOG_F(WARNING, "Athens: system clock VCO not supported yet!");
+        LOG_F(WARNING, "%s: system clock VCO not supported yet!", this->name.c_str());
         break;
     case 2: // clock source -> crystal frequency
-        out_freq = ATHENS_XTAL / post_div;
+        out_freq = this->xtal_freq / post_div;
         break;
     case 3:
-        LOG_F(WARNING, "Athens: attempt to use reserved Mux value!");
+        LOG_F(WARNING, "%s: attempt to use reserved Mux value!", this->name.c_str());
         break;
     }
+
+    LOG_F(INFO, "%s: dot clock frequency set to %f Hz", this->name.c_str(), out_freq);
 
     return static_cast<int>(out_freq + 0.5f);
 }
