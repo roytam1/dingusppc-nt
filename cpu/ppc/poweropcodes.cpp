@@ -27,20 +27,10 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #include "ppcmmu.h"
 #include <stdint.h>
 
-// Affects the XER register's SO and OV Bits
-
-inline void power_setsoov(uint32_t a, uint32_t b, uint32_t d) {
-    if ((a ^ b) & (a ^ d) & 0x80000000UL) {
-        ppc_state.spr[SPR::XER] |= XER::SO | XER::OV;
-    } else {
-        ppc_state.spr[SPR::XER] &= ~XER::OV;
-    }
-}
-
 /** mask generator for rotate and shift instructions (§ 4.2.1.4 PowerpC PEM) */
 static inline uint32_t power_rot_mask(unsigned rot_mb, unsigned rot_me) {
-    uint32_t m1 = 0xFFFFFFFFUL >> rot_mb;
-    uint32_t m2 = uint32_t(0xFFFFFFFFUL << (31 - rot_me));
+    uint32_t m1 = 0xFFFFFFFFU >> rot_mb;
+    uint32_t m2 = 0xFFFFFFFFU << (31 - rot_me);
     return ((rot_mb <= rot_me) ? m2 & m1 : m1 | m2);
 }
 
@@ -52,9 +42,10 @@ void dppc_interpreter::power_abs() {
         ppc_result_d = ppc_result_a;
         if (ov)
             ppc_state.spr[SPR::XER] |= XER::SO | XER::OV;
-
     } else {
-        ppc_result_d = ppc_result_a & 0x7FFFFFFF;
+        ppc_result_d = (int32_t(ppc_result_a) < 0) ? -ppc_result_a : ppc_result_a;
+        if (ov)
+            ppc_state.spr[SPR::XER] &= ~XER::OV;
     }
 
     if (rec)
@@ -76,10 +67,17 @@ void dppc_interpreter::power_clcs() {
     case 13: //data cache line size
     case 14: //minimum line size
     case 15: //maximum line size
-        ppc_result_d = 64;
-        break;
-    default:
-        ppc_result_d = 0;
+    default: ppc_result_d = is_601 ? 64 :     32; break;
+    case  7:
+    case 23: ppc_result_d = is_601 ? 64 :      0; break;
+    case  8:
+    case  9:
+    case 24:
+    case 25: ppc_result_d = is_601 ? 64 :      4; break;
+    case 10:
+    case 11:
+    case 26:
+    case 27: ppc_result_d = is_601 ? 64 : 0x4000; break;
     }
 
     ppc_store_iresult_reg(reg_d, ppc_result_d);
@@ -90,23 +88,39 @@ void dppc_interpreter::power_div() {
     uint32_t ppc_result_d;
     ppc_grab_regsdab(ppc_cur_instruction);
 
-    uint64_t dividend = ((uint64_t)ppc_result_a << 32) | ppc_state.spr[SPR::MQ];
-    int32_t  divisor  = ppc_result_b;
+    int64_t dividend = (uint64_t(ppc_result_a) << 32) | ppc_state.spr[SPR::MQ];
+    int32_t divisor = ppc_result_b;
+    int64_t quotient;
+    int32_t remainder;
 
-    if ((ppc_result_a == 0x80000000UL && divisor == -1) || !divisor) {
-        ppc_state.spr[SPR::MQ] = 0;
-        ppc_result_d  = 0x80000000UL;    // -2^31 aka INT32_MIN
+    if (dividend == -0x80000000 && divisor == -1) {
+        remainder = 0;
+        ppc_result_d = 0x80000000U; // -2^31 aka INT32_MIN
+        if (ov)
+            ppc_state.spr[SPR::XER] |= XER::SO | XER::OV;
+    } else if (!divisor) {
+        remainder = 0;
+        ppc_result_d = 0x80000000U; // -2^31 aka INT32_MIN
+        if (ov)
+            ppc_state.spr[SPR::XER] |= XER::SO | XER::OV;
     } else {
-        ppc_result_d  = uint32_t(dividend / divisor);
-        ppc_state.spr[SPR::MQ] = dividend % divisor;
+        quotient = dividend / divisor;
+        remainder = dividend % divisor;
+        ppc_result_d = uint32_t(quotient);
+        if (ov) {
+            if (((quotient >> 31) + 1) & ~1) {
+                ppc_state.spr[SPR::XER] |= XER::SO | XER::OV;
+            } else {
+                ppc_state.spr[SPR::XER] &= ~XER::OV;
+            }
+        }
     }
 
-    if (ov)
-        power_setsoov(ppc_result_b, ppc_result_a, ppc_result_d);
     if (rec)
-        ppc_changecrf0(ppc_result_d);
+        ppc_changecrf0(remainder);
 
     ppc_store_iresult_reg(reg_d, ppc_result_d);
+    ppc_state.spr[SPR::MQ] = remainder;
 }
 
 template void dppc_interpreter::power_div<RC0, OV0>();
@@ -116,16 +130,31 @@ template void dppc_interpreter::power_div<RC1, OV1>();
 
 template <field_rc rec, field_ov ov>
 void dppc_interpreter::power_divs() {
+    uint32_t ppc_result_d;
+    int32_t remainder;
     ppc_grab_regsdab(ppc_cur_instruction);
-    uint32_t ppc_result_d  = ppc_result_a / ppc_result_b;
-    ppc_state.spr[SPR::MQ] = (ppc_result_a % ppc_result_b);
 
-    if (ov)
-        power_setsoov(ppc_result_b, ppc_result_a, ppc_result_d);
+    if (!ppc_result_b) { // handle the "anything / 0" case
+        ppc_result_d = -1;
+        remainder = ppc_result_a;
+        if (ov)
+            ppc_state.spr[SPR::XER] |= XER::SO | XER::OV;
+    } else if (ppc_result_a == 0x80000000U && ppc_result_b == 0xFFFFFFFFU) {
+        ppc_result_d = 0x80000000U;
+        remainder = 0;
+        if (ov)
+            ppc_state.spr[SPR::XER] |= XER::SO | XER::OV;
+    } else { // normal signed devision
+        ppc_result_d = int32_t(ppc_result_a) / int32_t(ppc_result_b);
+        remainder = (int32_t(ppc_result_a) % int32_t(ppc_result_b));
+        if (ov)
+            ppc_state.spr[SPR::XER] &= ~XER::OV;
+    }
     if (rec)
-        ppc_changecrf0(ppc_result_d);
+        ppc_changecrf0(remainder);
 
     ppc_store_iresult_reg(reg_d, ppc_result_d);
+    ppc_state.spr[SPR::MQ] = remainder;
 }
 
 template void dppc_interpreter::power_divs<RC0, OV0>();
@@ -136,13 +165,18 @@ template void dppc_interpreter::power_divs<RC1, OV1>();
 template <field_rc rec, field_ov ov>
 void dppc_interpreter::power_doz() {
     ppc_grab_regsdab(ppc_cur_instruction);
-    uint32_t ppc_result_d = (int32_t(ppc_result_a) >= int32_t(ppc_result_b)) ? 0 :
-                             ppc_result_b - ppc_result_a;
+    uint32_t ppc_result_d = (int32_t(ppc_result_a) < int32_t(ppc_result_b)) ?
+        ppc_result_b - ppc_result_a : 0;
 
+    if (ov) {
+        if (int32_t(ppc_result_d) < 0) {
+            ppc_state.spr[SPR::XER] |= XER::SO | XER::OV;
+        } else {
+            ppc_state.spr[SPR::XER] &= ~XER::OV;
+        }
+    }
     if (rec)
         ppc_changecrf0(ppc_result_d);
-    if (ov)
-        power_setsoov(ppc_result_a, ppc_result_b, ppc_result_d);
 
     ppc_store_iresult_reg(reg_d, ppc_result_d);
 }
@@ -168,47 +202,50 @@ void dppc_interpreter::power_lscbx() {
     ppc_grab_regsdab(ppc_cur_instruction);
     ppc_effective_address = ppc_result_b + (reg_a ? ppc_result_a : 0);
 
-    uint8_t  return_value  = 0;
     uint32_t bytes_to_load = (ppc_state.spr[SPR::XER] & 0x7F);
-    uint32_t bytes_copied  = 0;
+    uint32_t bytes_remaining = bytes_to_load;
     uint8_t  matching_byte = (uint8_t)(ppc_state.spr[SPR::XER] >> 8);
-    uint32_t ppc_result_d  = 0;
+    uint32_t ppc_result_d = 0;
+    bool     is_match = false;
 
     // for storing each byte
-    uint32_t bitmask      = 0xFF000000;
     uint8_t  shift_amount = 24;
 
-    while (bytes_to_load > 0) {
-        return_value = mmu_read_vmem<uint8_t>(ppc_effective_address);
+    while (bytes_remaining > 0) {
+        uint8_t return_value = mmu_read_vmem<uint8_t>(ppc_effective_address);
 
-        ppc_result_d = (ppc_result_d & ~bitmask) | (return_value << shift_amount);
+        ppc_result_d |= return_value << shift_amount;
         if (!shift_amount) {
             if (reg_d != reg_a && reg_d != reg_b)
                 ppc_store_iresult_reg(reg_d, ppc_result_d);
             reg_d        = (reg_d + 1) & 0x1F;
-            bitmask      = 0xFF000000;
+            ppc_result_d = 0;
             shift_amount = 24;
         } else {
-            bitmask >>= 8;
             shift_amount -= 8;
         }
 
         ppc_effective_address++;
-        bytes_copied++;
-        bytes_to_load--;
+        bytes_remaining--;
 
-        if (return_value == matching_byte)
+        if (return_value == matching_byte) {
+            is_match = true;
             break;
+        }
     }
 
-    // store partiallly loaded register if any
+    // store partially loaded register if any
     if (shift_amount != 24 && reg_d != reg_a && reg_d != reg_b)
         ppc_store_iresult_reg(reg_d, ppc_result_d);
 
-    ppc_state.spr[SPR::XER] = (ppc_state.spr[SPR::XER] & ~0x7F) | bytes_copied;
+    ppc_state.spr[SPR::XER] = (ppc_state.spr[SPR::XER] & ~0x7F) | (bytes_to_load - bytes_remaining);
 
-    if (rec)
-        ppc_changecrf0(ppc_result_d);
+    if (rec) {
+        ppc_state.cr =
+            (ppc_state.cr & 0x0FFFFFFFUL) |
+            (is_match ? CRx_bit::CR_EQ : 0) |
+            ((ppc_state.spr[SPR::XER] & XER::SO) >> 3);
+    }
 }
 
 template void dppc_interpreter::power_lscbx<RC0>();
@@ -234,7 +271,7 @@ void dppc_interpreter::power_maskg() {
     ppc_result_a = insert_mask;
 
     if (rec)
-        ppc_changecrf0(ppc_result_d);
+        ppc_changecrf0(ppc_result_a);
 
     ppc_store_iresult_reg(reg_a, ppc_result_a);
 }
@@ -259,17 +296,19 @@ template void dppc_interpreter::power_maskir<RC1>();
 template <field_rc rec, field_ov ov>
 void dppc_interpreter::power_mul() {
     ppc_grab_regsdab(ppc_cur_instruction);
-    uint64_t product;
+    int64_t product        = int64_t(int32_t(ppc_result_a)) * int32_t(ppc_result_b);
+    uint32_t ppc_result_d  = uint32_t(uint64_t(product) >> 32);
+    ppc_state.spr[SPR::MQ] = uint32_t(product);
 
-    product                = ((uint64_t)ppc_result_a) * ((uint64_t)ppc_result_b);
-    uint32_t ppc_result_d  = ((uint32_t)(product >> 32));
-    ppc_state.spr[SPR::MQ] = ((uint32_t)(product));
-
+    if (ov) {
+        if (uint64_t(product >> 31) + 1 & ~1) {
+            ppc_state.spr[SPR::XER] |= XER::SO | XER::OV;
+        } else {
+            ppc_state.spr[SPR::XER] &= ~XER::OV;
+        }
+    }
     if (rec)
-        ppc_changecrf0(ppc_result_d);
-    if (ov)
-        power_setsoov(ppc_result_a, ppc_result_b, ppc_result_d);
-
+        ppc_changecrf0(uint32_t(product));
     ppc_store_iresult_reg(reg_d, ppc_result_d);
 }
 
@@ -283,10 +322,10 @@ void dppc_interpreter::power_nabs() {
     ppc_grab_regsda(ppc_cur_instruction);
     uint32_t ppc_result_d = (int32_t(ppc_result_a) < 0) ? ppc_result_a : -ppc_result_a;
 
-    if (rec)
-        ppc_changecrf0(ppc_result_d);
     if (ov)
         ppc_state.spr[SPR::XER] &= ~XER::OV;
+    if (rec)
+        ppc_changecrf0(ppc_result_d);
 
     ppc_store_iresult_reg(reg_d, ppc_result_d);
 }
@@ -316,11 +355,12 @@ void dppc_interpreter::power_rlmi() {
 template <field_rc rec>
 void dppc_interpreter::power_rrib() {
     ppc_grab_regssab(ppc_cur_instruction);
+    unsigned rot_sh = ppc_result_b & 0x1F;
 
     if (int32_t(ppc_result_d) < 0) {
-        ppc_result_a |= ((ppc_result_d & 0x80000000) >> ppc_result_b);
+        ppc_result_a |= (0x80000000U >> rot_sh);
     } else {
-        ppc_result_a &= ~((ppc_result_d & 0x80000000) >> ppc_result_b);
+        ppc_result_a &= ~(0x80000000U >> rot_sh);
     }
 
     if (rec)
@@ -408,14 +448,11 @@ template <field_rc rec>
 void dppc_interpreter::power_sllq() {
     ppc_grab_regssab(ppc_cur_instruction);
     unsigned rot_sh = ppc_result_b & 0x1F;
-    uint32_t r      = ((ppc_result_d << rot_sh) | (ppc_result_d >> (32 - rot_sh)));
-    uint32_t mask   = power_rot_mask(0, 31 - rot_sh);
 
-    if (ppc_result_b >= 0x20) {
-        ppc_result_a = (ppc_state.spr[SPR::MQ] & mask);
-    }
-    else {
-        ppc_result_a = ((r & mask) | (ppc_state.spr[SPR::MQ] & ~mask));
+    if (ppc_result_b & 0x20) {
+        ppc_result_a = ppc_state.spr[SPR::MQ] & (-1U << rot_sh);
+    } else {
+        ppc_result_a = ((ppc_result_d << rot_sh) | (ppc_state.spr[SPR::MQ] & ((1 << rot_sh) - 1)));
     }
 
     if (rec)
@@ -432,16 +469,17 @@ void dppc_interpreter::power_slq() {
     ppc_grab_regssab(ppc_cur_instruction);
     unsigned rot_sh = ppc_result_b & 0x1F;
 
-    if (ppc_result_b >= 0x20) {
-        ppc_result_a = ppc_result_d << rot_sh;
-    } else {
+    if (ppc_result_b & 0x20) {
         ppc_result_a = 0;
+    } else {
+        ppc_result_a = ppc_result_d << rot_sh;
     }
 
     if (rec)
         ppc_changecrf0(ppc_result_a);
 
     ppc_state.spr[SPR::MQ] = ((ppc_result_d << rot_sh) | (ppc_result_d >> (32 - rot_sh)));
+    ppc_store_iresult_reg(reg_a, ppc_result_a);
 }
 
 template void dppc_interpreter::power_slq<RC0>();
@@ -473,8 +511,8 @@ template <field_rc rec>
 void dppc_interpreter::power_sraq() {
     ppc_grab_regssab(ppc_cur_instruction);
     unsigned rot_sh        = ppc_result_b & 0x1F;
-    uint32_t mask          = (1 << rot_sh) - 1;
-    ppc_result_a           = (int32_t)ppc_result_d >> rot_sh;
+    uint32_t mask          = (ppc_result_b & 0x20) ? -1 : (1 << rot_sh) - 1;
+    ppc_result_a           = (int32_t)ppc_result_d >> ((ppc_result_b & 0x20) ? 31 : rot_sh);
     ppc_state.spr[SPR::MQ] = ((ppc_result_d << rot_sh) | (ppc_result_d >> (32 - rot_sh)));
 
     if ((int32_t(ppc_result_d) < 0) && (ppc_result_d & mask)) {
@@ -517,9 +555,10 @@ void dppc_interpreter::power_srea() {
     ppc_grab_regssab(ppc_cur_instruction);
     unsigned rot_sh        = ppc_result_b & 0x1F;
     ppc_result_a           = (int32_t)ppc_result_d >> rot_sh;
-    ppc_state.spr[SPR::MQ] = ((ppc_result_d << rot_sh) | (ppc_result_d >> (32 - rot_sh)));
+    uint32_t r             = ((ppc_result_d >> rot_sh) | (ppc_result_d << (32 - rot_sh)));
+    uint32_t mask          = -1U >> rot_sh;
 
-    if ((int32_t(ppc_result_d) < 0) && (ppc_result_d & rot_sh)) {
+    if ((int32_t(ppc_result_d) < 0) && (r & ~mask)) {
         ppc_state.spr[SPR::XER] |= XER::CA;
     } else {
         ppc_state.spr[SPR::XER] &= ~XER::CA;
@@ -529,6 +568,7 @@ void dppc_interpreter::power_srea() {
         ppc_changecrf0(ppc_result_a);
 
     ppc_store_iresult_reg(reg_a, ppc_result_a);
+    ppc_state.spr[SPR::MQ] = r;
 }
 
 template void dppc_interpreter::power_srea<RC0>();
@@ -538,10 +578,10 @@ template <field_rc rec>
 void dppc_interpreter::power_sreq() {
     ppc_grab_regssab(ppc_cur_instruction);
     unsigned rot_sh = ppc_result_b & 0x1F;
-    unsigned mask   = power_rot_mask(rot_sh, 31);
+    uint32_t mask   = -1U >> rot_sh;
 
-    ppc_result_a           = ((rot_sh & mask) | (ppc_state.spr[SPR::MQ] & ~mask));
-    ppc_state.spr[SPR::MQ] = rot_sh;
+    ppc_result_a           = (ppc_result_d >> rot_sh) | (ppc_state.spr[SPR::MQ] & ~mask);
+    ppc_state.spr[SPR::MQ] = (ppc_result_d >> rot_sh) | (ppc_result_d << (32 - rot_sh));
 
     if (rec)
         ppc_changecrf0(ppc_result_a);
@@ -592,10 +632,9 @@ void dppc_interpreter::power_srlq() {
     uint32_t r      = (ppc_result_d >> rot_sh) | (ppc_result_d << (32 - rot_sh));
     unsigned mask   = power_rot_mask(rot_sh, 31);
 
-    if (ppc_result_b >= 0x20) {
+    if (ppc_result_b & 0x20) {
         ppc_result_a = (ppc_state.spr[SPR::MQ] & mask);
-    }
-    else {
+    } else {
         ppc_result_a = ((r & mask) | (ppc_state.spr[SPR::MQ] & ~mask));
     }
 
@@ -613,7 +652,7 @@ void dppc_interpreter::power_srq() {
     ppc_grab_regssab(ppc_cur_instruction);
     unsigned rot_sh = ppc_result_b & 0x1F;
 
-    if (ppc_result_b >= 0x20) {
+    if (ppc_result_b & 0x20) {
         ppc_result_a = 0;
     } else {
         ppc_result_a = ppc_result_d >> rot_sh;
