@@ -87,10 +87,31 @@ void AppleRamdac::iodev_write(uint32_t address, uint16_t value) {
     case RamdacRegs::MULTI:
         switch (this->dac_addr) {
         case RamdacRegs::CURSOR_POS_HI:
+#ifdef CURSOR_LO_DELAY // HACK: prevents artifacts in some cases, disabled by default
+            if (this->cursor_timer_id) {
+                TimerManager::get_instance()->cancel_timer(this->cursor_timer_id);
+                cursor_timer_id = 0;
+            }
             this->cursor_xpos = (value << 8) | this->cursor_pos_lo;
+#else
+            this->cursor_xpos = (value << 8) | (this->cursor_xpos & 0xff);
+#endif
             break;
         case RamdacRegs::CURSOR_POS_LO:
-            this->cursor_pos_lo = value;
+#ifdef CURSOR_LO_DELAY // HACK: prevents artifacts in some cases, disabled by default
+            if (this->cursor_timer_id) {
+                TimerManager::get_instance()->cancel_timer(this->cursor_timer_id);
+                this->cursor_xpos = (this->cursor_xpos & 0xff00) | (this->cursor_pos_lo & 0x00ff);
+                cursor_timer_id   = 0;
+            }
+            this->cursor_pos_lo   = value;
+            this->cursor_timer_id = TimerManager::get_instance()->add_oneshot_timer(
+                NS_PER_SEC / 60, [this]() {
+                    this->cursor_xpos = (this->cursor_xpos & 0xff00) | (this->cursor_pos_lo & 0x00ff);
+                });
+#else
+            this->cursor_xpos = (this->cursor_xpos & 0xff00) | (value & 0x00ff);
+#endif
             break;
         case RamdacRegs::MISC_CTRL:
             if (bit_changed(this->dac_cr, value, 1)) {
@@ -221,6 +242,7 @@ void AppleRamdac::draw_hw_cursor(uint8_t *src_buf, uint8_t *dst_buf, int dst_pit
     uint8_t *src_row = src_buf + this->fb_pitch * this->cursor_ypos;
     uint8_t *dst_row = dst_buf + this->cursor_ypos * dst_pitch +
                            this->cursor_xpos * sizeof(uint32_t);
+    int src_pitch = this->fb_pitch;
 
     uint32_t *color = &this->cursor_clut[0];
 
@@ -242,7 +264,7 @@ void AppleRamdac::draw_hw_cursor(uint8_t *src_buf, uint8_t *dst_buf, int dst_pit
             }
             dst_16 += 16 * sizeof(uint32_t);
         }
-        src_row += this->fb_pitch;
+        src_row += src_pitch;
         dst_row += dst_pitch;
     }
 }
