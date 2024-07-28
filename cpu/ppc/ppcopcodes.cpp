@@ -33,20 +33,17 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 // Affects CR Field 0 - For integer operations
 void ppc_changecrf0(uint32_t set_result) {
-    ppc_state.cr &= 0x0FFFFFFFUL;
-
-    if (set_result == 0) {
-        ppc_state.cr |= 0x20000000UL;
-    } else {
-        if (set_result & 0x80000000) {
-            ppc_state.cr |= 0x80000000UL;
-        } else {
-            ppc_state.cr |= 0x40000000UL;
-        }
-    }
-
-    /* copy XER[SO] into CR0[SO]. */
-    ppc_state.cr |= (ppc_state.spr[SPR::XER] >> 3) & 0x10000000UL;
+    ppc_state.cr =
+        (ppc_state.cr & 0x0FFFFFFFU) // clear CR0
+        | (
+            (set_result == 0) ?
+                CRx_bit::CR_EQ
+            : (int32_t(set_result) < 0) ?
+                CRx_bit::CR_LT
+            :
+                CRx_bit::CR_GT
+        )
+        | ((ppc_state.spr[SPR::XER] & XER::SO) >> 3); // copy XER[SO] into CR0[SO].
 }
 
 // Affects the XER register's Carry Bit
@@ -69,7 +66,7 @@ inline void ppc_carry_sub(uint32_t a, uint32_t b) {
 // Affects the XER register's SO and OV Bits
 
 inline void ppc_setsoov(uint32_t a, uint32_t b, uint32_t d) {
-    if ((a ^ b) & (a ^ d) & 0x80000000UL) {
+    if (int32_t((a ^ b) & (a ^ d)) < 0) {
         ppc_state.spr[SPR::XER] |= XER::SO | XER::OV;
     } else {
         ppc_state.spr[SPR::XER] &= ~XER::OV;
@@ -533,7 +530,7 @@ void dppc_interpreter::ppc_divw() {
 
     if (!ppc_result_b) { // handle the "anything / 0" case
         ppc_result_d = 0; // tested on G4 in Mac OS X 10.4 and Open Firmware.
-        // ppc_result_d = (ppc_result_a & 0x80000000) ? -1 : 0; /* UNDOCUMENTED! */
+        // ppc_result_d = (int32_t(ppc_result_a) < 0) ? -1 : 0; /* UNDOCUMENTED! */
 
         if (ov)
             ppc_state.spr[SPR::XER] |= XER::SO | XER::OV;
@@ -632,7 +629,7 @@ void dppc_interpreter::ppc_sraw() {
     } else {
         uint32_t shift = ppc_result_b & 0x1F;
         ppc_result_a   = int32_t(ppc_result_d) >> shift;
-        if ((ppc_result_d & 0x80000000UL) && (ppc_result_d & ((1U << shift) - 1)))
+        if ((int32_t(ppc_result_d) < 0) && (ppc_result_d & ((1U << shift) - 1)))
             ppc_state.spr[SPR::XER] |= XER::CA;
     }
 
@@ -652,7 +649,7 @@ void dppc_interpreter::ppc_srawi() {
     // clear XER[CA] by default
     ppc_state.spr[SPR::XER] &= ~XER::CA;
 
-    if ((ppc_result_d & 0x80000000UL) && (ppc_result_d & ((1U << rot_sh) - 1)))
+    if ((int32_t(ppc_result_d) < 0) && (ppc_result_d & ((1U << rot_sh) - 1)))
         ppc_state.spr[SPR::XER] |= XER::CA;
 
     ppc_result_a = int32_t(ppc_result_d) >> rot_sh;
@@ -888,74 +885,118 @@ static void update_decrementer(uint32_t val) {
 }
 
 void dppc_interpreter::ppc_mfspr() {
-    uint32_t ref_spr = (((ppc_cur_instruction >> 11) & 0x1F) << 5) |
-                        ((ppc_cur_instruction >> 16) & 0x1F);
+    ppc_grab_dab(ppc_cur_instruction);
+    uint32_t ref_spr = (reg_b << 5) | reg_a;
 
+    if (ref_spr & 0x10) {
 #ifdef CPU_PROFILING
-    if (ref_spr > 31) {
         num_supervisor_instrs++;
-    }
 #endif
+        if (ppc_state.msr & MSR::PR) {
+            ppc_exception_handler(Except_Type::EXC_PROGRAM, Exc_Cause::NOT_ALLOWED);
+        }
+    }
 
     switch (ref_spr) {
+    case SPR::MQ:
+        if (!is_601) {
+            ppc_exception_handler(Except_Type::EXC_PROGRAM, Exc_Cause::ILLEGAL_OP);
+        }
+        ppc_state.gpr[reg_d] = ppc_state.spr[ref_spr];
+        break;
     case SPR::RTCL_U:
+        if (!is_601) {
+            ppc_exception_handler(Except_Type::EXC_PROGRAM, Exc_Cause::ILLEGAL_OP);
+        }
         calc_rtcl_value();
-        ppc_state.spr[SPR::RTCL_U] = rtc_lo & 0x3FFFFF80UL;
+        ppc_state.gpr[reg_d] =
+        ppc_state.spr[SPR::RTCL_S] = rtc_lo & 0x3FFFFF80UL;
+        ppc_state.spr[SPR::RTCU_S] = rtc_hi;
         break;
     case SPR::RTCU_U:
+        if (!is_601) {
+            ppc_exception_handler(Except_Type::EXC_PROGRAM, Exc_Cause::ILLEGAL_OP);
+        }
         calc_rtcl_value();
-        ppc_state.spr[SPR::RTCU_U] = rtc_hi;
+        ppc_state.gpr[reg_d] =
+        ppc_state.spr[SPR::RTCU_S] = rtc_hi;
+        ppc_state.spr[SPR::RTCL_S] = rtc_lo;
         break;
-    case SPR::DEC:
-        ppc_state.spr[SPR::DEC] = calc_dec_value();
+    case SPR::DEC_U:
+        if (!is_601) {
+            ppc_exception_handler(Except_Type::EXC_PROGRAM, Exc_Cause::ILLEGAL_OP);
+        }
+        // fallthrough
+    case SPR::DEC_S:
+        ppc_state.gpr[reg_d] = ppc_state.spr[SPR::DEC_S] = calc_dec_value();
         break;
+    default:
+        // FIXME: Unknown SPR should be noop or illegal instruction.
+        ppc_state.gpr[reg_d] = ppc_state.spr[ref_spr];
     }
-
-    ppc_state.gpr[(ppc_cur_instruction >> 21) & 0x1F] = ppc_state.spr[ref_spr];
 }
 
 void dppc_interpreter::ppc_mtspr() {
-    uint32_t ref_spr = (((ppc_cur_instruction >> 11) & 0x1F) << 5) |
-                        ((ppc_cur_instruction >> 16) & 0x1F);
+    ppc_grab_dab(ppc_cur_instruction);
+    uint32_t ref_spr = (reg_b << 5) | reg_a;
 
+    if (ref_spr & 0x10) {
 #ifdef CPU_PROFILING
-    if (ref_spr > 31) {
         num_supervisor_instrs++;
-    }
 #endif
-
-    if (ref_spr == SPR::PVR || (
-        ref_spr == SPR::MQ && !is_601
-    )) { // prevent writes to the read-only registers
-        return;
+        if (ppc_state.msr & MSR::PR) {
+            ppc_exception_handler(Except_Type::EXC_PROGRAM, Exc_Cause::NOT_ALLOWED);
+        }
     }
 
-    uint32_t val = ppc_state.gpr[(ppc_cur_instruction >> 21) & 0x1F];
-    ppc_state.spr[ref_spr] = val;
+    uint32_t val = ppc_state.gpr[reg_d];
 
     switch (ref_spr) {
+    case SPR::MQ:
+        if (!is_601) {
+            ppc_exception_handler(Except_Type::EXC_PROGRAM, Exc_Cause::ILLEGAL_OP);
+        }
+        ppc_state.spr[ref_spr] = val;
+        break;
+    case SPR::RTCL_U:
+    case SPR::RTCU_U:
+    case SPR::DEC_U:
+        if (!is_601) {
+            ppc_exception_handler(Except_Type::EXC_PROGRAM, Exc_Cause::ILLEGAL_OP);
+        }
+        break;
     case SPR::XER:
         ppc_state.spr[ref_spr] = val & 0xe000ff7f;
         break;
     case SPR::SDR1:
+        ppc_state.spr[ref_spr] = val;
         mmu_pat_ctx_changed(); // adapt to SDR1 changes
         break;
     case SPR::RTCL_S:
         calc_rtcl_value();
-        rtc_lo = val & 0x3FFFFF80UL;
+        ppc_state.spr[RTCL_S] = rtc_lo = val & 0x3FFFFF80UL;
+        ppc_state.spr[RTCU_S] = rtc_hi;
         break;
     case SPR::RTCU_S:
         calc_rtcl_value();
-        rtc_hi = val;
+        ppc_state.spr[RTCL_S] = rtc_lo;
+        ppc_state.spr[RTCU_S] = rtc_hi = val;
         break;
-    case SPR::DEC:
+    case SPR::DEC_S:
+        ppc_state.spr[DEC_S] = val;
         update_decrementer(val);
         break;
     case SPR::TBL_S:
         update_timebase(0xFFFFFFFF00000000ULL, val);
+        ppc_state.spr[TBL_S] = val;
+        ppc_state.spr[TBU_S] = tbr_wr_value >> 32;
         break;
     case SPR::TBU_S:
         update_timebase(0x00000000FFFFFFFFULL, uint64_t(val) << 32);
+        ppc_state.spr[TBL_S] = (uint32_t)tbr_wr_value;
+        ppc_state.spr[TBU_S] = val;
+        break;
+    case SPR::PVR:
         break;
     case 528:
     case 529:
@@ -965,6 +1006,7 @@ void dppc_interpreter::ppc_mtspr() {
     case 533:
     case 534:
     case 535:
+        ppc_state.spr[ref_spr] = val;
         ibat_update(ref_spr);
         break;
     case 536:
@@ -975,23 +1017,30 @@ void dppc_interpreter::ppc_mtspr() {
     case 541:
     case 542:
     case 543:
+        ppc_state.spr[ref_spr] = val;
         dbat_update(ref_spr);
+    default:
+        // FIXME: Unknown SPR should be noop or illegal instruction.
+        ppc_state.spr[ref_spr] = val;
     }
 }
 
 void dppc_interpreter::ppc_mftb() {
-    uint32_t ref_spr = (((ppc_cur_instruction >> 11) & 0x1F) << 5) |
-                        ((ppc_cur_instruction >> 16) & 0x1F);
-    int reg_d = (ppc_cur_instruction >> 21) & 0x1F;
+    ppc_grab_dab(ppc_cur_instruction);
+    uint32_t ref_spr = (reg_b << 5) | reg_a;
 
     uint64_t tbr_value = calc_tbr_value();
 
     switch (ref_spr) {
     case SPR::TBL_U:
-        ppc_state.gpr[reg_d] = uint32_t(tbr_value);
+        ppc_state.gpr[reg_d] =
+        ppc_state.spr[TBL_S] = uint32_t(tbr_value);
+        ppc_state.spr[TBU_S] = uint32_t(tbr_value >> 32);
         break;
     case SPR::TBU_U:
-        ppc_state.gpr[reg_d] = uint32_t(tbr_value >> 32);
+        ppc_state.gpr[reg_d] =
+        ppc_state.spr[TBU_S] = uint32_t(tbr_value >> 32);
+        ppc_state.spr[TBL_S] = uint32_t(tbr_value);
         break;
     default:
         ppc_exception_handler(Except_Type::EXC_PROGRAM, Exc_Cause::ILLEGAL_OP);
