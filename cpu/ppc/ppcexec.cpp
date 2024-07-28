@@ -277,9 +277,9 @@ void ppc_main_opcode()
     OpcodeGrabber[(ppc_cur_instruction >> 26) & 0x3F]();
 }
 
-static long long now_ns()
-{
-    return duration_cast<std::chrono::nanoseconds>(std::chrono::high_resolution_clock::now().time_since_epoch()).count();
+static long long now_ns() {
+    return std::chrono::duration_cast<std::chrono::nanoseconds>(
+        std::chrono::high_resolution_clock::now().time_since_epoch()).count();
 }
 
 uint64_t get_virt_time_ns()
@@ -325,8 +325,8 @@ static void ppc_exec_inner()
         // define boundaries of the next execution block
         // max execution block length = one memory page
         eb_start   = ppc_state.pc;
-        page_start = eb_start & PAGE_MASK;
-        eb_end     = page_start + PAGE_SIZE - 1;
+        page_start = eb_start & PPC_PAGE_MASK;
+        eb_end     = page_start + PPC_PAGE_SIZE - 1;
         exec_flags = 0;
 
         pc_real    = mmu_translate_imem(eb_start);
@@ -342,13 +342,13 @@ static void ppc_exec_inner()
             if (exec_flags) {
                 // define next execution block
                 eb_start = ppc_next_instruction_address;
-                if (!(exec_flags & EXEF_RFI) && (eb_start & PAGE_MASK) == page_start) {
+                if (!(exec_flags & EXEF_RFI) && (eb_start & PPC_PAGE_MASK) == page_start) {
                     pc_real += (int)eb_start - (int)ppc_state.pc;
                     if (msr_le) pc_real = mmu_translate_imem(eb_start);
                     ppc_set_cur_instruction(pc_real);
                 } else {
-                    page_start = eb_start & PAGE_MASK;
-                    eb_end = page_start + PAGE_SIZE - 1;
+                    page_start = eb_start & PPC_PAGE_MASK;
+                    eb_end = page_start + PPC_PAGE_SIZE - 1;
                     pc_real = mmu_translate_imem(eb_start);
                 }
                 ppc_state.pc = eb_start;
@@ -418,8 +418,8 @@ static void ppc_exec_until_inner(const uint32_t goal_addr)
         // define boundaries of the next execution block
         // max execution block length = one memory page
         eb_start   = ppc_state.pc;
-        page_start = eb_start & PAGE_MASK;
-        eb_end     = page_start + PAGE_SIZE - 1;
+        page_start = eb_start & PPC_PAGE_MASK;
+        eb_end     = page_start + PPC_PAGE_SIZE - 1;
         exec_flags = 0;
 
         pc_real    = mmu_translate_imem(eb_start);
@@ -435,13 +435,13 @@ static void ppc_exec_until_inner(const uint32_t goal_addr)
             if (exec_flags) {
                 // define next execution block
                 eb_start = ppc_next_instruction_address;
-                if (!(exec_flags & EXEF_RFI) && (eb_start & PAGE_MASK) == page_start) {
+                if (!(exec_flags & EXEF_RFI) && (eb_start & PPC_PAGE_MASK) == page_start) {
                     pc_real += (int)eb_start - (int)ppc_state.pc;
                     if (msr_le) pc_real = mmu_translate_imem(eb_start);
                     ppc_set_cur_instruction(pc_real);
                 } else {
-                    page_start = eb_start & PAGE_MASK;
-                    eb_end = page_start + PAGE_SIZE - 1;
+                    page_start = eb_start & PPC_PAGE_MASK;
+                    eb_end = page_start + PPC_PAGE_SIZE - 1;
                     pc_real = mmu_translate_imem(eb_start);
                 }
                 ppc_state.pc = eb_start;
@@ -489,8 +489,8 @@ static void ppc_exec_dbg_inner(const uint32_t start_addr, const uint32_t size)
         // define boundaries of the next execution block
         // max execution block length = one memory page
         eb_start   = ppc_state.pc;
-        page_start = eb_start & PAGE_MASK;
-        eb_end     = page_start + PAGE_SIZE - 1;
+        page_start = eb_start & PPC_PAGE_MASK;
+        eb_end     = page_start + PPC_PAGE_SIZE - 1;
         exec_flags = 0;
 
         pc_real    = mmu_translate_imem(eb_start);
@@ -507,13 +507,13 @@ static void ppc_exec_dbg_inner(const uint32_t start_addr, const uint32_t size)
             if (exec_flags) {
                 // define next execution block
                 eb_start = ppc_next_instruction_address;
-                if (!(exec_flags & EXEF_RFI) && (eb_start & PAGE_MASK) == page_start) {
+                if (!(exec_flags & EXEF_RFI) && (eb_start & PPC_PAGE_MASK) == page_start) {
                     pc_real += (int)eb_start - (int)ppc_state.pc;
                     if (msr_le) pc_real = mmu_translate_imem(eb_start);
                     ppc_set_cur_instruction(pc_real);
                 } else {
-                    page_start = eb_start & PAGE_MASK;
-                    eb_end = page_start + PAGE_SIZE - 1;
+                    page_start = eb_start & PPC_PAGE_MASK;
+                    eb_end = page_start + PPC_PAGE_SIZE - 1;
                     pc_real = mmu_translate_imem(eb_start);
                 }
                 ppc_state.pc = eb_start;
