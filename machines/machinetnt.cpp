@@ -61,11 +61,11 @@ int initialize_tnt(std::string& id)
     // attach IOBus Device #1 0xF301A000
     gMachineObj->add_device("BoardReg1", std::unique_ptr<BoardRegister>(
         new BoardRegister("Board Register 1",
-            0x3F                                        | // pull up all PRSNT bits
-            ((GET_BIN_PROP("emmo") ^ 1) << 8)           | // factory tests (active low)
-            ((GET_BIN_PROP("has_sixty6") ^ 1) << 13)    | // composite video out (active low)
-            (GET_BIN_PROP("has_mesh") << 14)            | // fast SCSI (active high)
-            0x8000U                                       // pull up unused bits
+            0x3F                                                                       | // pull up all PRSNT bits
+            ((GET_BIN_PROP("emmo") ^ 1) << 8)                                          | // factory tests (active low)
+            ((gMachineObj->get_comp_by_name_optional("Sixty6Video") == nullptr) << 13) | // composite video out (active low)
+            ((gMachineObj->get_comp_by_name_optional("MeshTnt") != nullptr) << 14)     | // fast SCSI (active high)
+            0x8000U                                                                      // pull up unused bits
     )));
     gc_obj->attach_iodevice(0, dynamic_cast<BoardRegister*>(gMachineObj->get_comp_by_name("BoardReg1")));
 
@@ -130,6 +130,17 @@ static const PropMap pm7500_settings_601 = {
     {"cpu", new StrProperty("601", vector<std::string>({"601", "604", "604e", "750"}))},
 };
 
+static const PropMap pm7500_settings_604 = {
+    {"rambank1_size", new IntProperty(16, vector<uint32_t>({4, 8, 16, 32, 64, 128}))},
+    {"rambank2_size", new IntProperty(0, vector<uint32_t>({0, 4, 8, 16, 32, 64, 128}))},
+    {"rambank3_size", new IntProperty(0, vector<uint32_t>({0, 4, 8, 16, 32, 64, 128}))},
+    {"rambank4_size", new IntProperty(0, vector<uint32_t>({0, 4, 8, 16, 32, 64, 128}))},
+    {"emmo", new BinProperty(0)},
+    {"has_sixty6", new BinProperty(0)},
+    {"has_mesh", new BinProperty(1)},
+    {"cpu", new StrProperty("604", vector<std::string>({"601", "604", "604e", "750"}))},
+};
+
 static const PropMap pm7500_settings_604e = {
     {"rambank1_size", new IntProperty(16, vector<uint32_t>({4, 8, 16, 32, 64, 128}))},
     {"rambank2_size", new IntProperty(0, vector<uint32_t>({0, 4, 8, 16, 32, 64, 128}))},
@@ -142,7 +153,15 @@ static const PropMap pm7500_settings_604e = {
 };
 
 static vector<string> pm7500_devices = {
+    "Hammerhead", "Bandit1", "Chaos", "ScsiMesh", "MeshTnt", "GrandCentral", "ControlVideo"
+};
+
+static vector<string> pm8500_devices = {
     "Hammerhead", "Bandit1", "Chaos", "ScsiMesh", "MeshTnt", "GrandCentral", "ControlVideo", "Sixty6Video"
+};
+
+static vector<string> pm9500_devices = {
+    "Hammerhead", "Bandit1", "Bandit2", "ScsiMesh", "MeshTnt", "GrandCentral"
 };
 
 static const MachineDescription pm7300_descriptor = {
@@ -161,5 +180,50 @@ static const MachineDescription pm7500_descriptor = {
     .init_func = &initialize_tnt
 };
 
+static const MachineDescription pm8500_descriptor = {
+    .name = "pm8500",
+    .description = "Power Macintosh 8500",
+    .devices = pm8500_devices,
+    .settings = pm7500_settings_604,
+    .init_func = &initialize_tnt
+};
+
+static const MachineDescription pm9500_descriptor = {
+    .name = "pm9500",
+    .description = "Power Macintosh 9500",
+    .devices = pm9500_devices,
+    .settings = pm7500_settings_604,
+    .init_func = &initialize_tnt
+};
+
+static const MachineDescription pm7600_descriptor = {
+    .name = "pm7600",
+    .description = "Power Macintosh 7600",
+    .devices = pm7500_devices,
+    .settings = pm7500_settings_604e,
+    .init_func = &initialize_tnt
+};
+
+static const MachineDescription pm8600_descriptor = {
+    .name = "pm8600",
+    .description = "Power Macintosh 8600",
+    .devices = pm8500_devices,
+    .settings = pm7500_settings_604e,
+    .init_func = &initialize_tnt
+};
+
+static const MachineDescription pm9600_descriptor = {
+    .name = "pm9600",
+    .description = "Power Macintosh 9600",
+    .devices = pm9500_devices,
+    .settings = pm7500_settings_604e,
+    .init_func = &initialize_tnt
+};
+
 REGISTER_MACHINE(pm7300, pm7300_descriptor);
 REGISTER_MACHINE(pm7500, pm7500_descriptor);
+REGISTER_MACHINE(pm8500, pm8500_descriptor);
+REGISTER_MACHINE(pm9500, pm9500_descriptor);
+REGISTER_MACHINE(pm7600, pm7600_descriptor);
+REGISTER_MACHINE(pm8600, pm8600_descriptor);
+REGISTER_MACHINE(pm9600, pm9600_descriptor);
