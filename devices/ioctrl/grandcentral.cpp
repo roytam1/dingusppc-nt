@@ -93,6 +93,18 @@ GrandCentral::GrandCentral() : PCIDevice("mac-io/grandcentral"), InterruptCtrl()
 
     // connect serial HW
     this->escc = dynamic_cast<EsccController*>(gMachineObj->get_comp_by_name("Escc"));
+    this->escc_a_tx_dma = std::unique_ptr<DMAChannel> (new DMAChannel("Escc_a_tx"));
+    this->escc_a_rx_dma = std::unique_ptr<DMAChannel> (new DMAChannel("Escc_a_rx"));
+    this->escc_b_tx_dma = std::unique_ptr<DMAChannel> (new DMAChannel("Escc_b_tx"));
+    this->escc_b_rx_dma = std::unique_ptr<DMAChannel> (new DMAChannel("Escc_b_rx"));
+    this->escc_a_tx_dma->register_dma_int(this, this->register_dma_int(IntSrc::DMA_SCCA_Tx));
+    this->escc_a_rx_dma->register_dma_int(this, this->register_dma_int(IntSrc::DMA_SCCA_Rx));
+    this->escc_b_tx_dma->register_dma_int(this, this->register_dma_int(IntSrc::DMA_SCCB_Tx));
+    this->escc_b_rx_dma->register_dma_int(this, this->register_dma_int(IntSrc::DMA_SCCB_Rx));
+    this->escc->set_dma_channel(0, this->escc_a_tx_dma.get());
+    this->escc->set_dma_channel(1, this->escc_a_rx_dma.get());
+    this->escc->set_dma_channel(2, this->escc_b_tx_dma.get());
+    this->escc->set_dma_channel(3, this->escc_b_rx_dma.get());
 
     // connect MESH (internal SCSI)
     this->mesh = dynamic_cast<MeshController*>(gMachineObj->get_comp_by_name("MeshTnt"));
@@ -206,10 +218,18 @@ uint32_t GrandCentral::read(uint32_t rgn_start, uint32_t offset, int size)
             return this->curio_dma->reg_read(offset & 0xFF, size);
         case MIO_GC_DMA_FLOPPY:
             return this->floppy_dma->reg_read(offset & 0xFF, size);
+        case MIO_GC_DMA_ESCC_A_XMIT:
+            return this->escc_a_tx_dma->reg_read(offset & 0xFF, size);
+        case MIO_GC_DMA_ESCC_A_RCV:
+            return this->escc_a_rx_dma->reg_read(offset & 0xFF, size);
+        case MIO_GC_DMA_ESCC_B_XMIT:
+            return this->escc_b_tx_dma->reg_read(offset & 0xFF, size);
+        case MIO_GC_DMA_ESCC_B_RCV:
+            return this->escc_b_rx_dma->reg_read(offset & 0xFF, size);
         case MIO_GC_DMA_AUDIO_OUT:
             return this->snd_out_dma->reg_read(offset & 0xFF, size);
         case MIO_GC_DMA_AUDIO_IN:
-            //LOG_F(WARNING, "%s: Unsupported DMA channel MIO_GC_DMA_AUDIO_IN read  @%02x.%c", this->name.c_str(), offset & 0xFF, SIZE_ARG(size));
+            //LOG_F(WARNING, "%s: Unsupported DMA channel DMA_AUDIO_IN read  @%02x.%c", this->name.c_str(), offset & 0xFF, SIZE_ARG(size));
             return 0; // this->snd_in_dma->reg_read(offset & 0xFF, size);
         case MIO_GC_DMA_SCSI_MESH:
             return this->mesh_dma->reg_read(offset & 0xFF, size);
@@ -308,11 +328,23 @@ void GrandCentral::write(uint32_t rgn_start, uint32_t offset, uint32_t value, in
         case MIO_GC_DMA_FLOPPY:
             this->floppy_dma->reg_write(offset & 0xFF, value, size);
             break;
+        case MIO_GC_DMA_ESCC_A_XMIT:
+            this->escc_a_tx_dma->reg_write(offset & 0xFF, value, size);
+            break;
+        case MIO_GC_DMA_ESCC_A_RCV:
+            this->escc_a_rx_dma->reg_write(offset & 0xFF, value, size);
+            break;
+        case MIO_GC_DMA_ESCC_B_XMIT:
+            this->escc_b_tx_dma->reg_write(offset & 0xFF, value, size);
+            break;
+        case MIO_GC_DMA_ESCC_B_RCV:
+            this->escc_b_rx_dma->reg_write(offset & 0xFF, value, size);
+            break;
         case MIO_GC_DMA_AUDIO_OUT:
             this->snd_out_dma->reg_write(offset & 0xFF, value, size);
             break;
         case MIO_GC_DMA_AUDIO_IN:
-            LOG_F(WARNING, "%s: Unsupported DMA channel MIO_GC_DMA_AUDIO_IN write @%02x.%c = %0*x", this->name.c_str(), offset & 0xFF, SIZE_ARG(size), size * 2, value);
+            LOG_F(WARNING, "%s: Unsupported DMA channel DMA_AUDIO_IN write @%02x.%c = %0*x", this->name.c_str(), offset & 0xFF, SIZE_ARG(size), size * 2, value);
             //this->snd_in_dma->reg_write(offset & 0xFF, value, size);
             break;
         case MIO_GC_DMA_SCSI_MESH:
