@@ -366,7 +366,7 @@ uint32_t AtiMach64Gx::read_reg(uint32_t reg_offset, uint32_t size)
 
 #define WRITE_VALUE_AND_LOG() \
     do { \
-        /*this->regs[reg_num] = new_value;*/ \
+        this->regs[reg_num] = new_value; \
         LOG_F(9, "%s: write %s %04x.%c = %0*x = %08x", this->name.c_str(), \
             get_reg_name(reg_num), reg_offset, SIZE_ARG(size), size * 2, \
             (uint32_t)extract_bits<uint64_t>(value, offset * 8, size * 8), new_value \
