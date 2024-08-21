@@ -92,10 +92,11 @@ protected:
     uint8_t r_command;
     uint8_t r_status;
     uint8_t r_status_save;
-    uint8_t r_dev_ctrl = 0x08;
+    uint8_t r_dev_ctrl = 0x08 | ata_interface::ATA_CTRL::IEN; // disable interrupts
 
     uint16_t    *data_ptr       = nullptr;
     uint16_t    *cur_data_ptr   = nullptr;
+    alignas(uint16_t)
     uint8_t     data_buf[512]   = {};
     int         xfer_cnt        = 0;
     int         chunk_cnt       = 0;
