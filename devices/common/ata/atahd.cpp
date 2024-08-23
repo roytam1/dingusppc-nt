@@ -101,7 +101,6 @@ int AtaHardDisk::perform_command() {
         this->r_status     &= ~BSY;
         this->update_intrq(1);
         break;
-
     case READ_MULTIPLE:
     case READ_SECTOR:
     case READ_SECTOR_NR: {
@@ -135,7 +134,6 @@ int AtaHardDisk::perform_command() {
             this->cur_fpos = this->get_lba() * ATA_HD_SEC_SIZE;
             this->data_ptr = (uint16_t *)this->buffer;
             this->cur_data_ptr = this->data_ptr;
-
             uint32_t xfer_size = sec_count * ATA_HD_SEC_SIZE;
             uint32_t ints_size = ATA_HD_SEC_SIZE;
             if (this->r_command == WRITE_MULTIPLE) {
@@ -162,14 +160,14 @@ int AtaHardDisk::perform_command() {
             this->r_status &= ~BSY;
         }
         break;
-    case READ_VERIFY:
-        // verify sectors are readable, just no-op
-        this->r_status &= ~BSY;
-        this->update_intrq(1);
-        break;
     case DIAGNOSTICS:
         this->r_error = 1; // device 0 passed, device 1 passed or not present
         this->device_set_signature();
+        this->r_status &= ~BSY;
+        this->update_intrq(1);
+        break;
+    case READ_VERIFY:
+        // verify sectors are readable, just no-op
         this->r_status &= ~BSY;
         this->update_intrq(1);
         break;
