@@ -28,6 +28,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #include <machines/machinebase.h>
 #include <memaccess.h>
 
+#include <bitset>
 #include <cstring>
 #include <fstream>
 #include <string>
@@ -90,16 +91,14 @@ int AtaHardDisk::perform_command() {
     case ATAPI_SOFT_RESET: // for ATA devices, is a no-op
         this->r_status &= ~BSY;
         break;
-        
-    case RECALIBRATE:
+    case RECALIBRATE: // is optional in ATA-3; disappeared in >= ATA-4
+        // OF 3.1.1 won't boot off the drive that reports error for this command
         this->r_error       = 0;
-        this->r_cylinder_lo = 0;
         this->r_cylinder_hi = 0;
-        break;
-
-    case SET_MULTIPLE:
-        this->multiple_sector_count = this->r_sect_count;
-        this->r_status &= ~BSY;
+        this->r_cylinder_lo = 0;
+        this->r_dev_head   &= 0xF0;
+        this->r_sect_num    = (this->r_dev_head & ATA_Dev_Head::LBA) ? 0 : 1;
+        this->r_status     &= ~BSY;
         this->update_intrq(1);
         break;
 
@@ -111,13 +110,13 @@ int AtaHardDisk::perform_command() {
             uint64_t offset    = this->get_lba() * ATA_HD_SEC_SIZE;
             uint32_t ints_size = ATA_HD_SEC_SIZE;
             if (this->r_command == READ_MULTIPLE) {
-                if (this->multiple_sector_count == 0) {
+                if (this->sec_per_block == 0) {
                     LOG_F(ERROR, "%s: READ MULTIPLE with SET MULTIPLE==0", this->name.c_str());
                     this->r_status |= ERR;
                     this->r_status &= ~BSY;
                     break;
                 }
-                ints_size *= this->multiple_sector_count;
+                ints_size *= this->sec_per_block;
             }
 
             //LOG_F(INFO, "%s: Read %d sectors at offset 0x%x", name.c_str(), sec_count, offset);
@@ -140,13 +139,13 @@ int AtaHardDisk::perform_command() {
             uint32_t xfer_size = sec_count * ATA_HD_SEC_SIZE;
             uint32_t ints_size = ATA_HD_SEC_SIZE;
             if (this->r_command == WRITE_MULTIPLE) {
-                if (this->multiple_sector_count == 0) {
+                if (this->sec_per_block == 0) {
                     LOG_F(ERROR, "%s: WRITE MULTIPLE with SET MULTIPLE==0", this->name.c_str());
                     this->r_status |= ERR;
                     this->r_status &= ~BSY;
                     break;
                 }
-                ints_size *= this->multiple_sector_count;
+                ints_size *= this->sec_per_block;
             }
             //LOG_F(INFO, "%s: Write %d sectors at offset 0x%x", name.c_str(), sec_count, cur_fpos);
 
@@ -168,6 +167,12 @@ int AtaHardDisk::perform_command() {
         this->r_status &= ~BSY;
         this->update_intrq(1);
         break;
+    case DIAGNOSTICS:
+        this->r_error = 1; // device 0 passed, device 1 passed or not present
+        this->device_set_signature();
+        this->r_status &= ~BSY;
+        this->update_intrq(1);
+        break;
     case INIT_DEV_PARAM:
         // update fictive disk geometry with parameters from host
         this->sectors = this->r_sect_count;
@@ -175,9 +180,18 @@ int AtaHardDisk::perform_command() {
         this->r_status &= ~BSY;
         this->update_intrq(1);
         break;
-    case DIAGNOSTICS:
-        this->r_error = 1;
-        this->device_set_signature();
+    case SET_MULTIPLE_MODE: // this command is mandatory for ATA devices
+        if (!this->r_sect_count || this->r_sect_count > 128 ||
+            std::bitset<8>(this->r_sect_count).count() != 1) { // power of two?
+            this->multiple_enabled = false;
+            this->r_error  |= ABRT;
+            this->r_status |= ERR;
+        } else {
+            this->sec_per_block = this->r_sect_count;
+            this->multiple_enabled = true;
+        }
+        this->r_status &= ~BSY;
+        this->update_intrq(1);
         break;
     case FLUSH_CACHE: // used by the XNU kernel driver
         this->r_status &= ~(BSY | DRQ | ERR);
@@ -236,6 +250,7 @@ void AtaHardDisk::prepare_identify_info() {
     std::memset(this->data_buf, 0, sizeof(this->data_buf));
 
     buf_ptr[ 0] = 0x0040; // ATA device, non-removable media, non-removable drive
+    buf_ptr[47] = this->sec_per_block; // block size of READ_MULTIPLE/WRITE_MULTIPLE
     buf_ptr[49] = 0x0200; // report LBA support
 
     buf_ptr[ 1] = this->cylinders;
