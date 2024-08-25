@@ -109,13 +109,13 @@ int AtaHardDisk::perform_command() {
             uint64_t offset    = this->get_lba() * ATA_HD_SEC_SIZE;
             uint32_t ints_size = ATA_HD_SEC_SIZE;
             if (this->r_command == READ_MULTIPLE) {
-                if (this->sec_per_block == 0) {
-                    LOG_F(ERROR, "%s: READ MULTIPLE with SET MULTIPLE==0", this->name.c_str());
+                if (!this->sectors_per_int) {
+                    LOG_F(ERROR, "%s: READ_MULTIPLE disabled", this->name.c_str());
                     this->r_status |= ERR;
                     this->r_status &= ~BSY;
                     break;
                 }
-                ints_size *= this->sec_per_block;
+                ints_size *= this->sectors_per_int;
             }
 
             //LOG_F(INFO, "%s: Read %d sectors at offset 0x%x", name.c_str(), sec_count, offset);
@@ -137,24 +137,21 @@ int AtaHardDisk::perform_command() {
             uint32_t xfer_size = sec_count * ATA_HD_SEC_SIZE;
             uint32_t ints_size = ATA_HD_SEC_SIZE;
             if (this->r_command == WRITE_MULTIPLE) {
-                if (this->sec_per_block == 0) {
-                    LOG_F(ERROR, "%s: WRITE MULTIPLE with SET MULTIPLE==0", this->name.c_str());
+                if (!this->sectors_per_int) {
+                    LOG_F(ERROR, "%s: WRITE_MULTIPLE disabled", this->name.c_str());
                     this->r_status |= ERR;
                     this->r_status &= ~BSY;
                     break;
                 }
-                ints_size *= this->sec_per_block;
+                ints_size *= this->sectors_per_int;
             }
             //LOG_F(INFO, "%s: Write %d sectors at offset 0x%x", name.c_str(), sec_count, cur_fpos);
 
             this->prepare_xfer(xfer_size, ints_size);
             this->post_xfer_action = [this]() {
-                this->hdd_img.write(this->data_ptr, this->cur_fpos, this->chunk_size);
-                this->cur_fpos += this->chunk_size;
-                auto new_cnt = this->xfer_cnt - this->chunk_size;
-                if (new_cnt <= 0) {
-                    //LOG_F(INFO, "%s: Write completed (%d)", this->name.c_str(), new_cnt);
-                }
+                uint64_t write_len = (this->cur_data_ptr - this->data_ptr) * sizeof(this->data_ptr[0]);
+                this->hdd_img.write(this->data_ptr, this->cur_fpos, write_len);
+                this->cur_fpos += write_len;
             };
             this->r_status |= DRQ;
             this->r_status &= ~BSY;
@@ -166,8 +163,7 @@ int AtaHardDisk::perform_command() {
         this->r_status &= ~BSY;
         this->update_intrq(1);
         break;
-    case READ_VERIFY:
-        // verify sectors are readable, just no-op
+    case READ_VERIFY: // verify sectors are readable, just no-op
         this->r_status &= ~BSY;
         this->update_intrq(1);
         break;
@@ -179,14 +175,16 @@ int AtaHardDisk::perform_command() {
         this->update_intrq(1);
         break;
     case SET_MULTIPLE_MODE: // this command is mandatory for ATA devices
-        if (!this->r_sect_count || this->r_sect_count > 128 ||
+        if (!this->r_sect_count || this->r_sect_count > SECTORS_PER_INT ||
             std::bitset<8>(this->r_sect_count).count() != 1) { // power of two?
-            this->multiple_enabled = false;
+            LOG_F(ERROR, "%s: invalid parameter %d for SET_MULTIPLE_MODE",
+                  this->name.c_str(), this->r_sect_count);
             this->r_error  |= ABRT;
             this->r_status |= ERR;
         } else {
-            this->sec_per_block = this->r_sect_count;
-            this->multiple_enabled = true;
+            LOG_F(9, "%s: SET_MULTIPLE_MODE, r_sect_count=%d", this->name.c_str(),
+                  this->r_sect_count);
+            this->sectors_per_int  = this->r_sect_count;
         }
         this->r_status &= ~BSY;
         this->update_intrq(1);
@@ -248,8 +246,17 @@ void AtaHardDisk::prepare_identify_info() {
     std::memset(this->data_buf, 0, sizeof(this->data_buf));
 
     buf_ptr[ 0] = 0x0040; // ATA device, non-removable media, non-removable drive
-    buf_ptr[47] = this->sec_per_block; // block size of READ_MULTIPLE/WRITE_MULTIPLE
     buf_ptr[49] = 0x0200; // report LBA support
+
+    // Maximum number of logical sectors per data block that the device supports
+    // for READ_MULTIPLE/WRITE_MULTIPLE commands.
+    buf_ptr[47] = 0x8000 | SECTORS_PER_INT;
+
+    // If bit 8 of word 59 is set to one, then bits 7:0 indicate the number of
+    // logical sectors that shall be transferred per data block for
+    // READ_MULTIPLE/WRITE_MULTIPLE commands.
+    if (this->sectors_per_int)
+        buf_ptr[59] = 0x100 | this->sectors_per_int;
 
     buf_ptr[ 1] = this->cylinders;
     buf_ptr[ 3] = this->heads;
