@@ -52,14 +52,14 @@ size_t ImgFile::size() const
     return impl->stream.tellg();
 }
 
-size_t ImgFile::read(void* buf, off_t offset, size_t length) const
+size_t ImgFile::read(void* buf, uint64_t offset, uint64_t length) const
 {
     impl->stream.seekg(offset, std::ios::beg);
     impl->stream.read((char *)buf, length);
     return impl->stream.gcount();
 }
 
-size_t ImgFile::write(const void* buf, off_t offset, size_t length)
+size_t ImgFile::write(const void* buf, uint64_t offset, uint64_t length)
 {
     impl->stream.seekg(offset, std::ios::beg);
     impl->stream.write((const char *)buf, length);

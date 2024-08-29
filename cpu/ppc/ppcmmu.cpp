@@ -348,12 +348,12 @@ static PATResult page_address_translation(uint32_t la, bool is_instr_fetch,
     if (!swap) {
         pte_addr2[2] |= 0x01;
         if (is_write) {
-            pte_addr[3] |= 0x80;
+            pte_addr2[3] |= 0x80;
         }
     } else {
         pte_addr2[1] |= 0x01;
         if (is_write) {
-            pte_addr[0] |= 0x80;
+            pte_addr2[0] |= 0x80;
         }
     }
 

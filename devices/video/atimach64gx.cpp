@@ -388,7 +388,8 @@ void AtiMach64Gx::write_reg(uint32_t reg_offset, uint32_t value, uint32_t size)
         insert_bits<uint32_t>(new_value, value, ATI_CRTC_VLINE, ATI_CRTC_VLINE_size);
         break;
     case ATI_CRTC_OFF_PITCH:
-        new_value = value;
+        new_value           = value;
+        this->regs[reg_num] = new_value;
         this->crtc_update();
         return;
     case ATI_CRTC_INT_CNTL:
