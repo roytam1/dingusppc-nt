@@ -80,7 +80,6 @@ uint32_t    glob_bb_start_la;
 /* variables related to virtual time */
 const bool g_realtime = false;
 uint64_t g_nanoseconds_base;
-uint64_t g_icycles_base;
 uint64_t g_icycles;
 int      icnt_factor;
 
@@ -350,7 +349,7 @@ static uint64_t process_events()
         // if there are no pending timers
         return g_icycles + 10000;
     }
-    return g_icycles + ((slice_ns + (1ULL << icnt_factor)) >> icnt_factor);
+    return g_icycles + (slice_ns >> icnt_factor) + 1;
 }
 
 static void force_cycle_counter_reload()
@@ -907,7 +906,6 @@ void ppc_cpu_init(MemCtrlBase* mem_ctrl, uint32_t cpu_version, bool include_601,
     mach_timebase_info(&timebase_info);
 #endif
     g_nanoseconds_base = cpu_now_ns();
-    g_icycles_base = 0;
     g_icycles = 0;
     //icnt_factor      = 6;
     icnt_factor = 4;

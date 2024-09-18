@@ -211,6 +211,15 @@ int main(int argc, char** argv) {
             power_on = true;
             continue;
         }
+        if (power_off_reason == po_shutting_down) {
+            if (execution_mode != debugger) {
+                LOG_F(INFO, "Shutdown.");
+                break;
+            }
+            LOG_F(INFO, "Shutdown...");
+            power_on = true;
+            continue;
+        }
         break;
     }
 
@@ -241,6 +250,10 @@ void run_machine(std::string machine_str, std::string bootrom_path, uint32_t exe
 
     switch (execution_mode) {
     case interpreter:
+        power_off_reason = po_starting_up;
+        enter_debugger();
+        break;
+    case threaded_int:
         power_off_reason = po_starting_up;
         enter_debugger();
         break;
